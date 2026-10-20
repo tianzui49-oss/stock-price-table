@@ -45,9 +45,9 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
   <section id="result" hidden>
     <section class="card">
       <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" id="stockIndustry" style="margin-top:7px">所属行业：待查询</div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
-      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestAmount" class="change">累计成交额：—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span></div>
-      <div id="chartPointInfo" aria-live="polite">在走势图上移动鼠标或手指查看位置；点按可固定标记，再点一次取消固定。</div>
+      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestAmount" class="change">成交额：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
+      <div id="chartPointInfo" aria-live="polite">在走势图上移动鼠标或手指查看位置；点按可固定标记，再点一次取消固定。</div>
       <div class="chart-note" id="chartInfo">近期日期显示历史分钟线；当前交易日会用历史分钟线补齐开盘以来的曲线，并叠加页面实时采样。超过数据源保留范围的分时历史无法补取。</div>
     </section>
 
@@ -222,7 +222,7 @@ function updateQuoteHeader(index){
   let amount=null,volume=null;
   if(live){amount=Number(q.amount_wan)*10000;volume=volumeToHand(q.volume_raw,state.symbol,q.low,q.high,q.amount_wan).hands;}
   else if(p)({amount,volume}=cumulativeAt(selected?index:state.chart.length-1));
-  $('latestAmount').textContent=`累计成交额：${formatTurnover(amount)}`;
+  $('latestAmount').textContent=`成交额：${formatTurnover(amount)}`;
   const gap=Number.isFinite(price)&&Number.isFinite(amount)&&amount>0&&Number.isFinite(volume)&&volume>0?volume*price*100-amount:null;
   $('latestGap').textContent=gap===null?'差：—（缺少累计量额）':`差：${pct(gap/amount*100,2)}（${signedTurnover(gap)}）`;
   $('latestGap').className='change '+(gap>0?'up':gap<0?'down':'');
