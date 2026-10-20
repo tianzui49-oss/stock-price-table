@@ -399,21 +399,22 @@ function tickCountNumber(value){if(value==null||typeof value==='boolean'||String
 function tickCountSession(row){
   const n=Number(row?.time);if(!Number.isFinite(n)||n<1500000000||n>2200000000)return null;
   const stamp=new Date((n+8*3600)*1000).toISOString(),day=stamp.slice(0,10),clock=stamp.slice(11,19);
-  const phase=clock<'09:30:00'?'pre':clock<='11:30:00'?'am':clock<'13:00:00'?'break':clock<'15:00:00'?'pm':'post';
+  const phase=clock<'09:30:00'?'pre':clock<='11:30:00'?'am':clock<'13:00:00'?'break':clock<='15:00:00'?'pm':'post';
   return {key:`${day}|${phase}`,phase};
 }
 function tickCountRows(rawRows=[]){
-  // 先对原始记录去重、按时间正序计算，再倒序显示；不改写源字段。
-  const unique=new Map();for(const row of rawRows)unique.set(tickRowFingerprint(row),row);
-  const rows=[...unique.values()].sort((a,b)=>Number(a.time)-Number(b.time)),counts=new Map();let previous=null;
+  // 保留全部返回记录（包括零成交行），按时间正序逐条计算，再倒序显示；不改写源字段。
+  const rows=[...rawRows].sort((a,b)=>Number(a.time)-Number(b.time)),counts=new Map();let previous=null;
   for(const row of rows){
     const session=tickCountSession(row),current=tickCountNumber(row.transaction_count);let count=null;
     if(session?.phase==='post'){
       const volume=row.volume,n=Number(volume);if(volume!=null&&typeof volume!=='boolean'&&String(volume).trim()!==''&&Number.isFinite(n)&&n>=0)count=n>0?1:0;
-    }else if(session&&(session.phase==='am'||session.phase==='pm')&&previous?.key===session.key&&current!==null&&previous.count!==null){
-      const difference=current-previous.count;if(difference>=0)count=difference;
+    }else if(session&&(session.phase==='am'||session.phase==='pm')){
+      const volume=row.volume,zeroVolume=volume!=null&&typeof volume!=='boolean'&&String(volume).trim()!==''&&Number(volume)===0;
+      if(zeroVolume)count=0;
+      else if(previous?.key===session.key&&current!==null&&previous.count!==null){const difference=current-previous.count;if(difference>=0)count=difference;}
     }
-    // 盘前行为不变；首条、缺失值、计数回退均不猜测，且不跨日期/时段借前值。
+    // 零成交行也必须更新前值；非零成交首条、缺失值、回退不猜测，不跨日期/时段借值。
     counts.set(row,count);previous=session?{key:session.key,count:current}:null;
   }
   return {rows:rows.reverse(),counts};
@@ -426,7 +427,7 @@ function tickRender(data){
   if(!wrap.hidden&&oldTop>1){const visibleTop=oldTop+$('thsdkTickHead').offsetHeight,index=[...body.children].findIndex(tr=>tr.offsetTop+tr.offsetHeight>visibleTop);if(index>=0&&tickState.viewRows[index]){const key=tickRowFingerprint(tickState.viewRows[index]);anchor={key,occurrence:tickState.viewRows.slice(0,index+1).filter(r=>tickRowFingerprint(r)===key).length,offset:oldTop-body.children[index].offsetTop};}}
   tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);if(!rows.length)return true;
   const head=document.createElement('tr');for(const label of ['时间（北京时间）','成交价','成交量（手）','笔数']){const th=document.createElement('th');th.textContent=label;head.appendChild(th);}$('thsdkTickHead').appendChild(head);
-  const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中：本条累计笔数减同日同时段前条；15:00起：有成交为1笔，无成交为0笔；—表示缺少可靠原值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
+  const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中（含15:00:00）：本条累计笔数减同日同时段上一条返回记录；零成交显示0笔且保留为前值；15:00:00之后：有成交为1笔，无成交为0笔；—表示缺少可靠原值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
   if(anchor){let occurrence=0,index=rows.findIndex(row=>tickRowFingerprint(row)===anchor.key&&++occurrence===anchor.occurrence);wrap.scrollTop=index>=0?body.children[index].offsetTop+anchor.offset:oldTop;}else wrap.scrollTop=wrap.hidden?0:oldTop;
   return true;
 }
