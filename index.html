@@ -165,7 +165,8 @@ function drawChart(){
   const ns='http://www.w3.org/2000/svg',W=1000,H=420,L=76,R=25,T=25,B=90,prices=pts.map(x=>Number(x.price));
   const reference=chartReference(state.chartDate).prev;
   const hasReference=Number.isFinite(reference)&&reference>0;
-  let lo=Math.min(...prices,hasReference?reference:Infinity),hi=Math.max(...prices,hasReference?reference:-Infinity);
+  const zeroPrices=pts.map((_,i)=>{const {amount,volume}=cumulativeAt(i);return Number.isFinite(amount)&&amount>=0&&Number.isFinite(volume)&&volume>0?amount/(volume*100):null;}).filter(Number.isFinite);
+  let lo=Math.min(...prices,...zeroPrices,hasReference?reference:Infinity),hi=Math.max(...prices,...zeroPrices,hasReference?reference:-Infinity);
   if(lo===hi){const p=Math.max(hi*.002,.01);lo-=p;hi+=p;}else{const p=(hi-lo)*.12;lo-=p;hi+=p;}
   const x=i=>L+(pts.length===1?0:i*(W-L-R)/(pts.length-1)),y=v=>T+(hi-v)*(H-T-B)/(hi-lo);
   function el(tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;return n;}
@@ -174,6 +175,8 @@ function drawChart(){
   if(hasReference){const yy=y(reference);svg.append(el('line',{id:'chartPrevCloseLine',x1:L,y1:yy,x2:W-R,y2:yy,stroke:'#8995a7','stroke-width':1.2,'stroke-dasharray':'6 5','pointer-events':'none'}));svg.append(el('text',{id:'chartPrevCloseLabel',x:W-R-4,y:yy-7,'text-anchor':'end',fill:'#68758a','font-size':13,'pointer-events':'none'},`昨收 ${reference.toFixed(2)}（0%）`));}
   const poly=pts.map((p,i)=>`${x(i)},${y(+p.price)}`).join(' ');svg.append(el('polyline',{points:poly,fill:'none',stroke:'#2878d0','stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));
   svg.append(el('circle',{cx:x(pts.length-1),cy:y(prices.at(-1)),r:5,fill:'#2878d0'}));
+  svg.append(el('line',{id:'chartZeroLine',x1:L,y1:T,x2:W-R,y2:T,stroke:'#2878d0','stroke-width':1.5,'stroke-dasharray':'7 5','pointer-events':'none',display:'none'}));
+  svg.append(el('text',{id:'chartZeroLineLabel',x:L+8,y:T,fill:'#2878d0','font-size':13,'pointer-events':'none',display:'none','paint-order':'stroke',stroke:'#fff','stroke-width':3,'stroke-linejoin':'round'}));
   const label=t=>t.includes(' ')?t.slice(11,16):t.length>=12?`${t.slice(8,10)}:${t.slice(10,12)}`:t;
   svg.append(el('text',{x:L,y:H-65,fill:'#68758a','font-size':13},label(pts[0].time)));
   svg.append(el('text',{x:W-R,y:H-65,'text-anchor':'end',fill:'#68758a','font-size':13},label(pts.at(-1).time)));
@@ -249,6 +252,8 @@ function updateQuoteHeader(index){
   else if(p)({amount,volume}=cumulativeAt(selected?index:state.chart.length-1));
   const zeroGapPrice=Number.isFinite(amount)&&amount>=0&&Number.isFinite(volume)&&volume>0?amount/(volume*100):null;
   $('latestZeroLine').textContent=Number.isFinite(zeroGapPrice)?`零线：${zeroGapPrice.toFixed(4)} 元`:'零线：—（缺少累计量额）';
+  const zeroLine=$('chart').querySelector('#chartZeroLine'),zeroLabel=$('chart').querySelector('#chartZeroLineLabel'),geometry=state.chartGeometry;
+  if(geometry&&Number.isFinite(zeroGapPrice)){const yy=geometry.y(zeroGapPrice);zeroLine?.setAttribute('display','');zeroLine?.setAttribute('y1',yy);zeroLine?.setAttribute('y2',yy);zeroLabel?.setAttribute('display','');zeroLabel?.setAttribute('y',Math.max(geometry.T+14,yy-7));if(zeroLabel)zeroLabel.textContent=`零线 ${zeroGapPrice.toFixed(4)}元`;}else{zeroLine?.setAttribute('display','none');zeroLabel?.setAttribute('display','none');}
   $('latestAmount').textContent=`成交额：${formatTurnover(amount)}`;
   const gap=Number.isFinite(price)&&Number.isFinite(amount)&&amount>0&&Number.isFinite(volume)&&volume>0?volume*price*100-amount:null;
   $('latestGap').textContent=gap===null?'差：—（缺少累计量额）':`差：${pct(gap/amount*100,2)}（${signedTurnover(gap)}）`;
