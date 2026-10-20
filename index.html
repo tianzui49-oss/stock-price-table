@@ -45,7 +45,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
   <section id="result" hidden>
     <section class="card">
       <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px 14px"><span id="stockIndustry">所属行业：待查询</span><span id="stockFloatCap" title="腾讯最新行情流通市值；切换历史走势时不表示历史市值">流通市值：待查询</span></div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
-      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="chartOpen" class="change" title="所选走势日期的开盘价，不随选中时刻改变">开盘价：—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestAmount" class="change">成交额：—</span></div>
+      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="chartOpen" class="change" title="所选走势日期的开盘价，不随选中时刻改变">开盘价：—</span><span id="latestAmount" class="change">成交额：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
       <div id="chartPointInfo" aria-live="polite">轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。</div>
       <div class="chart-note" id="chartInfo">近期日期显示历史分钟线；当前交易日会用历史分钟线补齐开盘以来的曲线，并叠加页面实时采样。超过数据源保留范围的分时历史无法补取。</div>
