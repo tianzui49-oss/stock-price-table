@@ -18,6 +18,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 .news-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.news-box{border:1px solid var(--line);border-radius:10px;padding:14px}.news-box h3{font-size:15px;margin:0 0 10px}.news-list{list-style:none;padding:0;margin:0}.news-list li{border-top:1px solid #edf0f5;padding:9px 0;font-size:13px}.news-list li:first-child{border-top:0}.news-list a{color:#1768b2;text-decoration:none}.news-list a:hover{text-decoration:underline}.tag{display:inline-block;border-radius:99px;padding:1px 7px;margin-right:6px;background:#edf2f8;color:#56657a;font-size:11px}.tag.risk{background:#fff0ed;color:#b23b2e}.tag.good{background:#eaf7ef;color:#28724e}.hint{font-size:12px;color:var(--muted);margin:12px 0 0}.empty{color:#8a95a5;font-size:13px}.footer{font-size:12px;color:#768296;text-align:center;margin-top:24px}
 @media(max-width:860px){.form{grid-template-columns:1fr 1fr}.query-field{grid-column:1/-1}.actions{grid-column:1/-1}.news-grid{grid-template-columns:1fr}.hero{display:block}.hero .small{display:block;margin-top:8px}}
 @media(max-width:520px){main{padding:18px 12px 40px}.card{padding:15px}.form{grid-template-columns:1fr 1fr}.actions button{flex:1}.toolbar{align-items:flex-start;flex-direction:column}.hero h1{font-size:23px}}
+.thsdk-snapshot .section-head{align-items:flex-start}.thsdk-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.thsdk-controls label{font-size:13px;color:var(--muted)}.thsdk-controls select{height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 9px;background:#fff;color:var(--ink);font:inherit}.thsdk-meta{margin:0 0 12px;color:var(--muted);font-size:13px}.thsdk-chart{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:9px;background:#fbfcfe}.thsdk-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.thsdk-box{border:1px solid var(--line);border-radius:10px;padding:12px}.thsdk-box h3{font-size:15px;margin:0 0 9px}.thsdk-table{min-width:0;font-size:13px}.thsdk-table th,.thsdk-table td{padding:7px 6px}.thsdk-empty{color:#8a95a5;font-size:13px}.thsdk-error{padding:10px 12px;border-radius:8px;background:#fff1f0;color:#a33;font-size:13px}.thsdk-note{margin:10px 0 0;color:var(--muted);font-size:12px}@media(max-width:640px){.thsdk-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -40,6 +41,20 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
       <div><button class="secondary" id="csvBtn" type="button" disabled>下载 CSV</button> <button class="secondary" id="mdBtn" type="button" disabled>下载报告</button></div>
     </div>
     <div id="status">输入股票代码或名称后点击“查询 / 开始”。实时图需要在 A 股交易时段保持页面打开；默认每 1 秒采样一次。</div>
+  </section>
+
+  <section class="card thsdk-snapshot" id="thsdkSnapshot" aria-labelledby="thsdkTitle">
+    <div class="section-head"><div><h2 id="thsdkTitle">THSDK 行情快照</h2><p class="thsdk-meta" id="thsdkMeta">非实时、非 Level-2；数据来自同源快照文件。</p></div><div class="thsdk-controls"><label for="thsdkStock">选择股票</label><select id="thsdkStock" aria-label="选择 THSDK 快照股票"></select></div></div>
+    <div id="thsdkMessage" class="small">正在加载 THSDK 快照…</div>
+    <div id="thsdkContent" hidden>
+      <svg id="thsdkChart" class="thsdk-chart" viewBox="0 0 1000 300" role="img" aria-label="THSDK 分时价格折线图"></svg>
+      <p class="thsdk-note" id="thsdkDailyNote"></p>
+      <div class="thsdk-grid">
+        <div class="thsdk-box"><h3>五档买卖盘</h3><div class="table-wrap"><table class="thsdk-table"><thead><tr><th>方向</th><th>档位</th><th>价格</th><th>原始量</th></tr></thead><tbody id="thsdkDepthBody"></tbody></table></div></div>
+        <div class="thsdk-box"><h3>最近10笔普通逐笔</h3><div class="table-wrap"><table class="thsdk-table"><thead><tr><th>时间</th><th>价格</th><th>原始量</th><th>原始类型</th><th>原始计数</th></tr></thead><tbody id="thsdkTicksBody"></tbody></table></div></div>
+      </div>
+      <p class="thsdk-note">成交量列显示“原始量”，单位按 SDK 原始返回保留；逐笔成交类型仅显示原始值，不据此推断买卖方向。逐笔时间与抓取时间按北京时间显示；分时横轴按 SDK 返回顺序排列，原始时间编码尚未解析，不冒充具体分钟。</p>
+    </div>
   </section>
 
   <section id="result" hidden>
@@ -371,5 +386,43 @@ $('chart').addEventListener('lostpointercapture',finishChartGesture);
 window.addEventListener('blur',()=>{if(chartGesture)finishChartGesture();else if(!pinnedPointTime)clearChartSelection();});
 // Tap toggling happens only on pointerup, never on the synthetic click after a swipe.
 </script>
-</body>
+	<script>
+	(function(){
+	  'use strict';
+	  const NS='http://www.w3.org/2000/svg',file='./thsdk-snapshot.json';
+	  const el=id=>document.getElementById(id),select=el('thsdkStock'),message=el('thsdkMessage'),content=el('thsdkContent');
+	  let snapshot=null;
+	  function text(value,fallback='—'){return value===null||value===undefined||value===''?fallback:String(value);}
+	  function timeText(value){
+	    if(value===null||value===undefined||value==='')return '—';
+	    let date;
+	    if(typeof value==='number'||/^\d+(\.\d+)?$/.test(String(value).trim())){let n=Number(value);if(n<1e12)n*=1000;date=new Date(n);}else date=new Date(String(value));
+	    if(Number.isNaN(date?.getTime()))return String(value);
+	    const parts=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date),v={};for(const p of parts)v[p.type]=p.value;
+	    return `${v.year}-${v.month}-${v.day} ${v.hour}:${v.minute}:${v.second}`;
+	  }
+	  function addCell(row,value){const cell=document.createElement('td');cell.textContent=text(value);row.appendChild(cell);}
+	  function drawChart(stock){
+	    const svg=el('thsdkChart');svg.replaceChildren();const points=Array.isArray(stock.intraday)?stock.intraday.filter(p=>Number.isFinite(Number(p?.price))):[];
+	    if(!points.length){const t=document.createElementNS(NS,'text');t.setAttribute('x','500');t.setAttribute('y','150');t.setAttribute('text-anchor','middle');t.setAttribute('fill','#68758a');t.textContent='暂无分时数据';svg.appendChild(t);return;}
+	    const W=1000,H=300,L=58,R=18,T=20,B=42,prices=points.map(p=>Number(p.price)),lo=Math.min(...prices),hi=Math.max(...prices),span=hi-lo||Math.max(Math.abs(hi)*.01,.01),min=lo-span*.08,max=hi+span*.08;
+	    const x=i=>L+(W-L-R)*(points.length===1?.5:i/(points.length-1)),y=p=T+(H-T-B)*(1-(Number(p)-min)/(max-min));
+	    const axis=document.createElementNS(NS,'path');axis.setAttribute('d',`M ${L} ${T} V ${H-B} H ${W-R}`);axis.setAttribute('fill','none');axis.setAttribute('stroke','#cfd8e5');svg.appendChild(axis);
+    	const path=document.createElementNS(NS,'path');path.setAttribute('d',points.map((p,i)=>`${i?'L':'M'} ${x(i).toFixed(2)} ${y(p.price).toFixed(2)}`).join(' '));path.setAttribute('fill','none');path.setAttribute('stroke','#2878d0');path.setAttribute('stroke-width','3');path.setAttribute('stroke-linejoin','round');path.setAttribute('stroke-linecap','round');svg.appendChild(path);
+    	const high=document.createElementNS(NS,'text');high.setAttribute('x',L);high.setAttribute('y',14);high.setAttribute('fill','#68758a');high.setAttribute('font-size','13');high.textContent=hi.toFixed(2);svg.appendChild(high);const low=document.createElementNS(NS,'text');low.setAttribute('x',L);low.setAttribute('y',H-8);low.setAttribute('fill','#68758a');low.setAttribute('font-size','13');low.textContent=lo.toFixed(2);svg.appendChild(low);
+    	const first=document.createElementNS(NS,'text');first.setAttribute('x',L);first.setAttribute('y',H-14);first.setAttribute('fill','#68758a');first.setAttribute('font-size','12');first.textContent=points[0].time?timeText(points[0].time).slice(11):'起点（序列 1）';svg.appendChild(first);const last=document.createElementNS(NS,'text');last.setAttribute('x',W-R);last.setAttribute('y',H-14);last.setAttribute('text-anchor','end');last.setAttribute('fill','#68758a');last.setAttribute('font-size','12');last.textContent=points.at(-1).time?timeText(points.at(-1).time).slice(11):`终点（序列 ${points.length}）`;svg.appendChild(last);
+    }
+  function render(stock){
+    if(!stock)return;el('thsdkMeta').textContent=`非实时、非 Level-2｜来源：${text(snapshot?.source,'THSDK')}｜抓取时间（北京时间）：${timeText(snapshot?.captured_at)}`;
+    drawChart(stock);const daily=Array.isArray(stock.daily)&&stock.daily.length?stock.daily.at(-1):null;el('thsdkDailyNote').textContent=daily?`日线快照：${text(daily.date)}｜开 ${text(daily.open)}｜高 ${text(daily.high)}｜低 ${text(daily.low)}｜收 ${text(daily.close)}｜原始量 ${text(daily.volume)}｜成交额 ${text(daily.turnover)}`:'暂无日线快照数据';
+    const depth=Array.isArray(stock.depth)?stock.depth.slice().sort((a,b)=>Number(a.level)-Number(b.level)):[],db=el('thsdkDepthBody');db.replaceChildren();for(const d of depth.filter(x=>{const s=String(x?.side||'').toLowerCase();return ['bid','ask','buy','sell'].includes(s);}).slice(0,10)){const tr=document.createElement('tr');const s=String(d.side||'').toLowerCase();addCell(tr,s==='bid'||s==='buy'?'买盘':'卖盘');addCell(tr,d.level);addCell(tr,d.price);addCell(tr,d.volume);db.appendChild(tr);}if(!db.children.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=4;td.className='thsdk-empty';td.textContent='暂无五档数据';tr.appendChild(td);db.appendChild(tr);}
+    const ticks=Array.isArray(stock.ticks)?stock.ticks.slice(-10):[],tb=el('thsdkTicksBody');tb.replaceChildren();for(const tick of ticks){const tr=document.createElement('tr');addCell(tr,timeText(tick.time));addCell(tr,tick.price);addCell(tr,tick.volume);addCell(tr,tick.deal_type);addCell(tr,tick.transaction_count);tb.appendChild(tr);}if(!tb.children.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=5;td.className='thsdk-empty';td.textContent='暂无逐笔数据';tr.appendChild(td);tb.appendChild(tr);}
+  }
+  function populate(){select.replaceChildren();for(const stock of snapshot.stocks){const option=document.createElement('option');option.value=String(stock.code||stock.full_code||'');option.textContent=`${text(stock.name,'未命名股票')}（${text(stock.code||stock.full_code)}）`;select.appendChild(option);}content.hidden=false;render(snapshot.stocks[0]);select.addEventListener('change',()=>render(snapshot.stocks.find(s=>String(s.code||s.full_code||'')===select.value)));message.textContent=`已加载 ${snapshot.stocks.length} 只股票的快照；不会自动刷新。`;
+  }
+  async function load(){try{const response=await fetch(file,{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data||data.mode!=='snapshot'||!Array.isArray(data.stocks))throw new Error('JSON 合约不完整');snapshot=data;if(!snapshot.stocks.length)throw new Error('stocks 为空');populate();}catch(error){content.hidden=true;message.className='thsdk-error';message.textContent=`THSDK 行情快照暂时无法加载（${text(error?.message,'未知错误')}），不影响原有行情查询、图表、行业与公告功能。`;}}
+  load();
+  }());
+	</script>
+	</body>
 </html>
