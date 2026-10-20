@@ -400,22 +400,42 @@ function tickCountSession(row){
   const n=Number(row?.time);if(!Number.isFinite(n)||n<1500000000||n>2200000000)return null;
   const stamp=new Date((n+8*3600)*1000).toISOString(),day=stamp.slice(0,10),clock=stamp.slice(11,19);
   const phase=clock<'09:30:00'?'pre':clock<='11:30:00'?'am':clock<'13:00:00'?'break':clock<='15:00:00'?'pm':'post';
-  return {key:`${day}|${phase}`,phase};
+  return {key:`${day}|${phase}`,phase,day,clock};
 }
 function tickCountRows(rawRows=[]){
-  // 保留全部返回记录（包括零成交行），按时间正序逐条计算，再倒序显示；不改写源字段。
-  const rows=[...rawRows].sort((a,b)=>Number(a.time)-Number(b.time)),counts=new Map();let previous=null;
+  // 保留原始行；收盘边界按同一证券/日期的记录顺序和源字段识别，不设延迟秒数窗口。
+  const rows=[...rawRows].sort((a,b)=>Number(a.time)-Number(b.time)),counts=new Map(),closing=new Map();let previous=null;
   for(const row of rows){
-    const session=tickCountSession(row),current=tickCountNumber(row.transaction_count);let count=null;
+    const session=tickCountSession(row),current=tickCountNumber(row.transaction_count),group=session?`${row.code||''}|${session.day}`:'';
+    const volume=row.volume,n=Number(volume),validVolume=volume!=null&&typeof volume!=='boolean'&&String(volume).trim()!==''&&Number.isFinite(n)&&n>=0;
+    let count=null;
+    if(session&&!closing.has(group))closing.set(group,{settled:false,baseline:null});
+    const close=closing.get(group);
     if(session?.phase==='post'){
-      const volume=row.volume,n=Number(volume);if(volume!=null&&typeof volume!=='boolean'&&String(volume).trim()!==''&&Number.isFinite(n)&&n>=0)count=n>0?1:0;
+      // 本源普通成交为1/5且无逐笔委托序号；真正盘后成交为17/21并带实际序号。
+      // 只接纳尚未结算的第一条普通收盘成交；窗口缺前值时显示—，不能伪装成1笔。
+      const regular=[1,5].includes(tickCountNumber(row.deal_type))&&tickCountNumber(row.ask_order_id)===4294967295;
+      const delayedClose=!close.settled&&regular&&validVolume&&n>0;
+      if(delayedClose){
+        const baseline=close.baseline;
+        if(baseline!==null&&current!==null&&current>=baseline)count=current-baseline;
+        close.settled=true;
+      }else{
+        if(validVolume)count=n>0?1:0;
+        if(validVolume&&n>0)close.settled=true;
+        // 收盘前值缺失/回退不猜测；零成交状态行继续更新累计前值。
+        if(!close.settled)close.baseline=current;
+      }
     }else if(session&&(session.phase==='am'||session.phase==='pm')){
-      const volume=row.volume,zeroVolume=volume!=null&&typeof volume!=='boolean'&&String(volume).trim()!==''&&Number(volume)===0;
-      if(zeroVolume)count=0;
-      else if(previous?.key===session.key&&current!==null&&previous.count!==null){const difference=current-previous.count;if(difference>=0)count=difference;}
+      if(validVolume&&n===0)count=0;
+      else if(previous?.key===session.key&&previous.group===group&&current!==null&&previous.count!==null){const difference=current-previous.count;if(difference>=0)count=difference;}
+      if(session.phase==='pm'){
+        close.baseline=current;
+        if(session.clock==='15:00:00'&&validVolume&&n>0)close.settled=true;
+      }
     }
-    // 零成交行也必须更新前值；非零成交首条、缺失值、回退不猜测，不跨日期/时段借值。
-    counts.set(row,count);previous=session?{key:session.key,count:current}:null;
+    // 零成交行也保留并更新前值；不跨证券、日期或早午时段借用累计笔数。
+    counts.set(row,count);previous=session?{key:session.key,group,count:current}:null;
   }
   return {rows:rows.reverse(),counts};
 }
@@ -427,7 +447,7 @@ function tickRender(data){
   if(!wrap.hidden&&oldTop>1){const visibleTop=oldTop+$('thsdkTickHead').offsetHeight,index=[...body.children].findIndex(tr=>tr.offsetTop+tr.offsetHeight>visibleTop);if(index>=0&&tickState.viewRows[index]){const key=tickRowFingerprint(tickState.viewRows[index]);anchor={key,occurrence:tickState.viewRows.slice(0,index+1).filter(r=>tickRowFingerprint(r)===key).length,offset:oldTop-body.children[index].offsetTop};}}
   tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);if(!rows.length)return true;
   const head=document.createElement('tr');for(const label of ['时间（北京时间）','成交价','成交量（手）','笔数']){const th=document.createElement('th');th.textContent=label;head.appendChild(th);}$('thsdkTickHead').appendChild(head);
-  const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中（含15:00:00）：本条累计笔数减同日同时段上一条返回记录；零成交显示0笔且保留为前值；15:00:00之后：有成交为1笔，无成交为0笔；—表示缺少可靠原值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
+  const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中及当天首条收盘普通成交（可延迟返回）：按同日累计笔数差值计算，不按固定延迟秒数截断；已结算收盘后的盘后成交：有成交为1笔；零成交保留并显示0笔；—表示缺少可靠前值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
   if(anchor){let occurrence=0,index=rows.findIndex(row=>tickRowFingerprint(row)===anchor.key&&++occurrence===anchor.occurrence);wrap.scrollTop=index>=0?body.children[index].offsetTop+anchor.offset:oldTop;}else wrap.scrollTop=wrap.hidden?0:oldTop;
   return true;
 }
