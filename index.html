@@ -18,14 +18,14 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 .news-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.news-box{border:1px solid var(--line);border-radius:10px;padding:14px}.news-box h3{font-size:15px;margin:0 0 10px}.news-list{list-style:none;padding:0;margin:0}.news-list li{border-top:1px solid #edf0f5;padding:9px 0;font-size:13px}.news-list li:first-child{border-top:0}.news-list a{color:#1768b2;text-decoration:none}.news-list a:hover{text-decoration:underline}.tag{display:inline-block;border-radius:99px;padding:1px 7px;margin-right:6px;background:#edf2f8;color:#56657a;font-size:11px}.tag.risk{background:#fff0ed;color:#b23b2e}.tag.good{background:#eaf7ef;color:#28724e}.hint{font-size:12px;color:var(--muted);margin:12px 0 0}.empty{color:#8a95a5;font-size:13px}.footer{font-size:12px;color:#768296;text-align:center;margin-top:24px}
 @media(max-width:860px){.form{grid-template-columns:1fr 1fr}.query-field{grid-column:1/-1}.actions{grid-column:1/-1}.news-grid{grid-template-columns:1fr}.hero{display:block}.hero .small{display:block;margin-top:8px}}
 @media(max-width:520px){main{padding:18px 12px 40px}.card{padding:15px}.form{grid-template-columns:1fr 1fr}.actions button{flex:1}.toolbar{align-items:flex-start;flex-direction:column}.hero h1{font-size:23px}}
-.thsdk-snapshot .section-head{align-items:flex-start}.thsdk-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.thsdk-controls label{font-size:13px;color:var(--muted)}.thsdk-controls select{height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 9px;background:#fff;color:var(--ink);font:inherit}.thsdk-meta{margin:0 0 12px;color:var(--muted);font-size:13px}.thsdk-chart{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:9px;background:#fbfcfe}.thsdk-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.thsdk-box{border:1px solid var(--line);border-radius:10px;padding:12px}.thsdk-box h3{font-size:15px;margin:0 0 9px}.thsdk-table{min-width:0;font-size:13px}.thsdk-table th,.thsdk-table td{padding:7px 6px}.thsdk-empty{color:#8a95a5;font-size:13px}.thsdk-error{padding:10px 12px;border-radius:8px;background:#fff1f0;color:#a33;font-size:13px}.thsdk-note{margin:10px 0 0;color:var(--muted);font-size:12px}@media(max-width:640px){.thsdk-grid{grid-template-columns:1fr}}
+.thsdk-meta{margin:8px 0;color:var(--muted);font-size:13px}.thsdk-note{margin:10px 0 0;color:var(--muted);font-size:12px}.thsdk-scroll{max-height:420px;overflow:auto}.thsdk-scroll th{position:sticky;top:0}.thsdk-table{min-width:680px}.thsdk-error{color:#a33}
 </style>
 </head>
 <body>
 <main>
   <header class="hero">
-    <div><h1>股票量价表与实时分时图</h1><p>单文件浏览器版｜行情来自腾讯，新闻与公告来自东方财富</p></div>
-    <span class="small">无需安装 Python 或第三方库</span>
+    <div><h1>股票量价表与实时分时图</h1><p>单文件浏览器版｜趋势行情来自腾讯，普通逐笔来自 THSDK，新闻与公告来自东方财富</p></div>
+    <span class="small">浏览器查询｜THSDK 逐笔由私有后端提供</span>
   </header>
 
   <section class="card">
@@ -43,27 +43,21 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     <div id="status">输入股票代码或名称后点击“查询 / 开始”。实时图需要在 A 股交易时段保持页面打开；默认每 1 秒采样一次。</div>
   </section>
 
-  <section class="card thsdk-snapshot" id="thsdkSnapshot" aria-labelledby="thsdkTitle">
-    <div class="section-head"><div><h2 id="thsdkTitle">THSDK 行情快照</h2><p class="thsdk-meta" id="thsdkMeta">非实时、非 Level-2；数据来自同源快照文件。</p></div><div class="thsdk-controls"><label for="thsdkStock">选择股票</label><select id="thsdkStock" aria-label="选择 THSDK 快照股票"></select></div></div>
-    <div id="thsdkMessage" class="small">正在加载 THSDK 快照…</div>
-    <div id="thsdkContent" hidden>
-      <svg id="thsdkChart" class="thsdk-chart" viewBox="0 0 1000 300" role="img" aria-label="THSDK 分时价格折线图"></svg>
-      <p class="thsdk-note" id="thsdkDailyNote"></p>
-      <div class="thsdk-grid">
-        <div class="thsdk-box"><h3>五档买卖盘</h3><div class="table-wrap"><table class="thsdk-table"><thead><tr><th>方向</th><th>档位</th><th>价格</th><th>原始量</th></tr></thead><tbody id="thsdkDepthBody"></tbody></table></div></div>
-        <div class="thsdk-box"><h3>最近10笔普通逐笔</h3><div class="table-wrap"><table class="thsdk-table"><thead><tr><th>时间</th><th>价格</th><th>原始量</th><th>原始类型</th><th>原始计数</th></tr></thead><tbody id="thsdkTicksBody"></tbody></table></div></div>
-      </div>
-      <p class="thsdk-note">成交量列显示“原始量”，单位按 SDK 原始返回保留；逐笔成交类型仅显示原始值，不据此推断买卖方向。逐笔时间与抓取时间按北京时间显示；分时横轴按 SDK 返回顺序排列，原始时间编码尚未解析，不冒充具体分钟。</p>
-    </div>
-  </section>
-
-  <section id="result" hidden>
+<section id="result" hidden>
     <section class="card">
       <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px 14px"><span id="stockIndustry">所属行业：待查询</span><span id="stockFloatCap" title="腾讯最新行情流通市值；切换历史走势时不表示历史市值">流通市值：待查询</span></div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
       <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestZeroLine" class="change" title="零线价格＝累计成交额（元）÷累计成交量（股）；该价格使累计量×价−累计成交额为零">零线：—</span><span id="chartOpen" class="change" title="所选走势日期的开盘价，不随选中时刻改变">开盘价：—</span><span id="chartPrevClose" class="change" title="所选走势日期前一个交易日的收盘价，不随选中时刻改变">昨收价：—</span><span id="latestAmount" class="change">成交额：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
       <div id="chartPointInfo" aria-live="polite">轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。</div>
       <div class="chart-note" id="chartInfo">近期日期显示历史分钟线；当前交易日会用历史分钟线补齐开盘以来的曲线，并叠加页面实时采样。超过数据源保留范围的分时历史无法补取。</div>
+    </section>
+
+    <section class="card" id="thsdkTicks" aria-labelledby="thsdkTitle">
+      <div class="section-head"><h2 id="thsdkTitle">THSDK 普通逐笔成交</h2><span class="small" id="thsdkStockLabel">跟随上方查询股票</span></div>
+      <div id="thsdkMode" class="small">未选择趋势图时显示最新可用成交；滑动或轻点趋势图时显示截至所选时刻前60秒的成交。</div>
+      <p id="thsdkStatus" class="thsdk-meta" role="status">查询股票后从 THSDK 获取原始普通逐笔数据。</p>
+      <div class="table-wrap thsdk-scroll" id="thsdkTableWrap" hidden><table class="thsdk-table"><thead id="thsdkTickHead"></thead><tbody id="thsdkTickBody"></tbody></table></div>
+      <p class="thsdk-note">来源：THSDK tick_level1（普通逐笔，非 Level-2）。表头、行序与字段值保留 SDK 原始返回，不换算量、不推断买卖方向、不合成成交。time 原始值保留；如可确认为 Unix 秒，另列北京时间辅助阅读。最新模式每次向源接口取数；休市期间可能不变，盘中刷新尚待验证。当前使用临时私有后端，后端休眠或断开时会提示不可用，不回退到测试快照。</p>
     </section>
 
     <section class="card">
@@ -211,7 +205,7 @@ function chartReference(day){const row=state.dailyByDate?.[day]||{};if(day===day
 function signedPrice(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${Math.abs(n).toFixed(2)}元`;}
 function formatTurnover(n){if(!Number.isFinite(n))return '—';return Math.abs(n)>=1e8?`${(n/1e8).toFixed(2)}亿`:`${(n/1e4).toFixed(2)}万`;}
 function signedTurnover(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${formatTurnover(Math.abs(n))}`;}
-function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();}
+function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();tickSync();}
 function cumulativeAt(index){
   const p=state.chart[index];if(!p)return {amount:null,volume:null};
   if(p.isLive&&p.amount_wan!==null&&p.amount_wan!==undefined&&Number.isFinite(Number(p.amount_wan)))return {amount:Number(p.amount_wan)*10000,volume:p.volume_hand!==null&&p.volume_hand!==undefined&&Number.isFinite(Number(p.volume_hand))?Number(p.volume_hand):null};
@@ -232,7 +226,7 @@ function showChartPoint(index){
   const width=clock.length*g.fontSize*.64+16,cx=Math.max(width/2+2,Math.min(g.W-width/2-2,sx));
   svg.querySelector('#chartCrossTime')?.setAttribute('display','');
   text.textContent=clock;text.setAttribute('x',cx);box.setAttribute('x',cx-width/2);box.setAttribute('width',width);
-  updateChartPointInfo(index);updateQuoteHeader(index);
+  updateChartPointInfo(index);updateQuoteHeader(index);tickSync();
 }
 function updateChartPointInfo(index){
   const p=state.chart[index];if(!p)return;
@@ -311,10 +305,10 @@ async function refreshQuote(){
   finally{refreshInFlight=false;}
 }
 async function runQuery(event){
-  event?.preventDefault();stopTimer();const query=$('query').value.trim();if(!query)return;
+  event?.preventDefault();tickReset();stopTimer();const query=$('query').value.trim();if(!query)return;
   clearChartSelection();$('stockFloatCap').textContent='流通市值：加载中…';state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
   try{
-    const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;void loadStockBoards(symbol);let q=null;
+    const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;tickStart();void loadStockBoards(symbol);let q=null;
     try{q=await rawQuote(symbol);state.name=q.name||code;state.quote=q;}catch(e){state.name=code;console.warn('获取实时快照失败',e);}updateStockMarketCap(q);saveStockHistory(query,code,state.name);
     const now=dayShanghai(),from=$('start').value,to=$('end').value;
     const start=from||new Date(Date.now()-120*86400000).toISOString().slice(0,10),end=to||now;
@@ -336,8 +330,23 @@ async function runQuery(event){
     state.report=makeReport();if(isTradingDayWindow()){const secs=Math.max(1,Math.min(600,Number($('interval').value)||1));state.timer=setInterval(refreshQuote,secs*1000);if(isTradingSession())setStatus(`页面保持打开时会自动采样实时行情，间隔 ${secs} 秒。`,'ok');}else setStatus('行情与报告已加载；可查看数据源提供的近期分时，非交易时段不再实时采样。','');if(!state.chart.some(p=>!p.isLive))setStatus(minuteError?`日线已加载，但分钟线加载失败：${minuteError}；本机缓存不会跨设备同步，请稍后重试。`:'所选日期暂无可用分钟线，可能是休市日或超出数据源保留范围。',minuteError?'error':'');
   }catch(e){setStatus('查询失败：'+e.message,'error');console.error(e);}
 }
+
+// Only this public, read-only API URL is shipped. SDK authentication stays server-side.
+const THSDK_TICK_API='https://8766-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/ticks';
+const tickState={enabled:false,timer:null,debounce:null,controller:null,key:'',generation:0,cache:new Map()};
+function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true; }
+function tickStop(){tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.generation++;$('thsdkStatus').textContent='已停止逐笔自动刷新；保留当前显示，点击“查询 / 开始”恢复。';}
+function tickReset(){tickStop();tickState.key='';tickState.cache.clear();tickClear();$('thsdkStockLabel').textContent='正在解析查询股票…';$('thsdkStatus').textContent='等待股票解析后读取 THSDK 原始普通逐笔。';}
+function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(!document.hidden&&!hoveredPointTime)tickSync(true);},ms);tickSync();}
+function tickQuery(){if(!/^\d{6}$/.test(state.code))return null;const params=new URLSearchParams({code:state.code});let label='最新可用成交（最多80笔）';if(hoveredPointTime){const normalized=normalizeChartTime(hoveredPointTime),match=normalized.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(:\d{2})?/);if(!match)return null;const clock=match[2]+(match[3]||':00');params.set('date',match[1]);params.set('time',clock);label=`截至 ${match[1]} ${clock} 前60秒的源成交（不含未来成交）`;}return {params,key:params.toString(),label};}
+function tickClock(value){if(typeof value!=='number'||value<1500000000||value>2200000000)return '';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value*1000));}
+function tickText(value){return value===null?'null':typeof value==='object'?JSON.stringify(value):String(value);}
+function tickRender(data){tickClear();const cols=data.columns,rows=data.rows;if(!rows.length)return;const tr=document.createElement('tr'),hasClock=cols.includes('time')&&rows.some(r=>tickClock(r.time));for(const col of [...cols,...(hasClock?['北京时间（辅助）']:[])]){const th=document.createElement('th');th.textContent=col;tr.appendChild(th);}$('thsdkTickHead').appendChild(tr);for(const row of rows){const tr=document.createElement('tr');for(const col of cols){const td=document.createElement('td');td.textContent=tickText(row[col]);tr.appendChild(td);}if(hasClock){const td=document.createElement('td');td.textContent=tickClock(row.time)||'—';tr.appendChild(td);}$('thsdkTickBody').appendChild(tr);}$('thsdkTableWrap').hidden=false;}
+function tickSync(force=false){if(!tickState.enabled)return;const q=tickQuery();if(!q)return;const changed=q.key!==tickState.key;if(!changed&&(!force||tickState.controller))return;if(changed){tickState.key=q.key;tickState.generation++;tickState.controller?.abort();tickClear();}$('thsdkStockLabel').textContent=`${state.name||state.code}（${state.code}）`;$('thsdkMode').textContent=q.label;clearTimeout(tickState.debounce);$('thsdkStatus').classList.remove('thsdk-error');const cached=tickState.cache.get(q.key);if(!force&&cached&&Date.now()-cached.at<60000){tickRender(cached.data);$('thsdkStatus').textContent=`源数据获取时间：${cached.data.fetched_at}｜${cached.data.rows.length} 笔（已读取的时间窗口）`;return;}$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent='正在向 THSDK 读取该股票、该时间窗口的原始成交…';tickState.debounce=setTimeout(()=>tickFetch(q,tickState.generation),changed?120:0);}
+async function tickFetch(q,generation){const controller=new AbortController();tickState.controller=controller;const timeout=setTimeout(()=>controller.abort(),18000);try{const response=await fetch(`${THSDK_TICK_API}?${q.params}`,{cache:'no-store',signal:controller.signal,credentials:'omit'});const data=await response.json();if(!response.ok||data.error)throw Error(data.message||(response.status===429?'请求过于频繁，请稍后重试':'源接口暂时不可用或不支持该时间范围'));if(data.source!=='THSDK'||data.code!==q.params.get('code')||!Array.isArray(data.columns)||!Array.isArray(data.rows))throw Error('源数据格式不匹配');if(generation!==tickState.generation||q.key!==tickState.key||!tickState.enabled)return;tickRender(data);$('thsdkStockLabel').textContent=`${state.name||state.code}（${state.code}）`;const bounds=data.bounds?.start&&data.bounds?.end?`｜源请求范围 ${data.bounds.start||''} 至 ${data.bounds.end||''}`:'';$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=`源数据获取时间：${data.fetched_at}｜${data.rows.length} 笔${bounds}${data.rows.length?'':'｜源接口未返回该窗口成交，不以最新成交代替'}`;if(q.params.has('time')){tickState.cache.set(q.key,{at:Date.now(),data});if(tickState.cache.size>128)tickState.cache.delete(tickState.cache.keys().next().value);}}catch(error){if(generation!==tickState.generation||q.key!==tickState.key||!tickState.enabled)return;tickClear();$('thsdkStatus').classList.add('thsdk-error');$('thsdkStatus').textContent=`THSDK 原始逐笔暂不可用：${error.name==='AbortError'?'源请求超时或已取消':error.message}。不显示测试数据，不影响原有趋势图。`;}finally{clearTimeout(timeout);if(tickState.controller===controller)tickState.controller=null;}}
+
 renderStockHistory();$('historySelect').addEventListener('change',event=>{if(event.target.value){$('query').value=event.target.value;setStatus('已填入历史股票代码；点击“查询 / 开始”即可查询。');}});$('clearHistoryBtn').addEventListener('click',()=>{try{localStorage.removeItem(STOCK_HISTORY_KEY);}catch{}renderStockHistory();setStatus('已清除本浏览器保存的股票输入历史。');});
-$('queryForm').addEventListener('submit',runQuery);$('chartDate').addEventListener('change',loadSelectedChartDay);$('stopBtn').addEventListener('click',()=>{stopTimer();setStatus('已停止自动刷新；点击“查询 / 开始”可重新查询。');});$('csvBtn').addEventListener('click',downloadCSV);$('mdBtn').addEventListener('click',()=>download(`${state.code}_量价报告.md`,makeReport(),'text/markdown;charset=utf-8'));
+$('queryForm').addEventListener('submit',runQuery);$('chartDate').addEventListener('change',loadSelectedChartDay);$('stopBtn').addEventListener('click',()=>{stopTimer();tickStop();setStatus('已停止自动刷新；点击“查询 / 开始”可重新查询。');});$('csvBtn').addEventListener('click',downloadCSV);$('mdBtn').addEventListener('click',()=>download(`${state.code}_量价报告.md`,makeReport(),'text/markdown;charset=utf-8'));
 $('noNews').addEventListener('change',()=>{if(state.code&&$('noNews').checked){state.news=[];state.anns=[];renderNews();}});
 let chartGesture=null,suppressChartHover=false,chartHoverResume=null;
 const CHART_DRAG_THRESHOLD=8; // CSS pixels: tolerate tiny finger jitter, not a real swipe.
@@ -386,43 +395,6 @@ $('chart').addEventListener('lostpointercapture',finishChartGesture);
 window.addEventListener('blur',()=>{if(chartGesture)finishChartGesture();else if(!pinnedPointTime)clearChartSelection();});
 // Tap toggling happens only on pointerup, never on the synthetic click after a swipe.
 </script>
-	<script>
-	(function(){
-	  'use strict';
-	  const NS='http://www.w3.org/2000/svg',file='./thsdk-snapshot.json';
-	  const el=id=>document.getElementById(id),select=el('thsdkStock'),message=el('thsdkMessage'),content=el('thsdkContent');
-	  let snapshot=null;
-	  function text(value,fallback='—'){return value===null||value===undefined||value===''?fallback:String(value);}
-	  function timeText(value){
-	    if(value===null||value===undefined||value==='')return '—';
-	    let date;
-	    if(typeof value==='number'||/^\d+(\.\d+)?$/.test(String(value).trim())){let n=Number(value);if(n<1e12)n*=1000;date=new Date(n);}else date=new Date(String(value));
-	    if(Number.isNaN(date?.getTime()))return String(value);
-	    const parts=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date),v={};for(const p of parts)v[p.type]=p.value;
-	    return `${v.year}-${v.month}-${v.day} ${v.hour}:${v.minute}:${v.second}`;
-	  }
-	  function addCell(row,value){const cell=document.createElement('td');cell.textContent=text(value);row.appendChild(cell);}
-	  function drawChart(stock){
-	    const svg=el('thsdkChart');svg.replaceChildren();const points=Array.isArray(stock.intraday)?stock.intraday.filter(p=>Number.isFinite(Number(p?.price))):[];
-	    if(!points.length){const t=document.createElementNS(NS,'text');t.setAttribute('x','500');t.setAttribute('y','150');t.setAttribute('text-anchor','middle');t.setAttribute('fill','#68758a');t.textContent='暂无分时数据';svg.appendChild(t);return;}
-	    const W=1000,H=300,L=58,R=18,T=20,B=42,prices=points.map(p=>Number(p.price)),lo=Math.min(...prices),hi=Math.max(...prices),span=hi-lo||Math.max(Math.abs(hi)*.01,.01),min=lo-span*.08,max=hi+span*.08;
-	    const x=i=>L+(W-L-R)*(points.length===1?.5:i/(points.length-1)),y=p=>T+(H-T-B)*(1-(Number(p)-min)/(max-min));
-	    const axis=document.createElementNS(NS,'path');axis.setAttribute('d',`M ${L} ${T} V ${H-B} H ${W-R}`);axis.setAttribute('fill','none');axis.setAttribute('stroke','#cfd8e5');svg.appendChild(axis);
-    	const path=document.createElementNS(NS,'path');path.setAttribute('d',points.map((p,i)=>`${i?'L':'M'} ${x(i).toFixed(2)} ${y(p.price).toFixed(2)}`).join(' '));path.setAttribute('fill','none');path.setAttribute('stroke','#2878d0');path.setAttribute('stroke-width','3');path.setAttribute('stroke-linejoin','round');path.setAttribute('stroke-linecap','round');svg.appendChild(path);
-    	const high=document.createElementNS(NS,'text');high.setAttribute('x',L);high.setAttribute('y',14);high.setAttribute('fill','#68758a');high.setAttribute('font-size','13');high.textContent=hi.toFixed(2);svg.appendChild(high);const low=document.createElementNS(NS,'text');low.setAttribute('x',L);low.setAttribute('y',H-8);low.setAttribute('fill','#68758a');low.setAttribute('font-size','13');low.textContent=lo.toFixed(2);svg.appendChild(low);
-    	const first=document.createElementNS(NS,'text');first.setAttribute('x',L);first.setAttribute('y',H-14);first.setAttribute('fill','#68758a');first.setAttribute('font-size','12');first.textContent=points[0].time?timeText(points[0].time).slice(11):'起点（序列 1）';svg.appendChild(first);const last=document.createElementNS(NS,'text');last.setAttribute('x',W-R);last.setAttribute('y',H-14);last.setAttribute('text-anchor','end');last.setAttribute('fill','#68758a');last.setAttribute('font-size','12');last.textContent=points.at(-1).time?timeText(points.at(-1).time).slice(11):`终点（序列 ${points.length}）`;svg.appendChild(last);
-    }
-  function render(stock){
-    if(!stock)return;el('thsdkMeta').textContent=`非实时、非 Level-2｜来源：${text(snapshot?.source,'THSDK')}｜抓取时间（北京时间）：${timeText(snapshot?.captured_at)}`;
-    drawChart(stock);const daily=Array.isArray(stock.daily)&&stock.daily.length?stock.daily.at(-1):null;el('thsdkDailyNote').textContent=daily?`日线快照：${text(daily.date)}｜开 ${text(daily.open)}｜高 ${text(daily.high)}｜低 ${text(daily.low)}｜收 ${text(daily.close)}｜原始量 ${text(daily.volume)}｜成交额 ${text(daily.turnover)}`:'暂无日线快照数据';
-    const depth=Array.isArray(stock.depth)?stock.depth.slice().sort((a,b)=>Number(a.level)-Number(b.level)):[],db=el('thsdkDepthBody');db.replaceChildren();for(const d of depth.filter(x=>{const s=String(x?.side||'').toLowerCase();return ['bid','ask','buy','sell'].includes(s);}).slice(0,10)){const tr=document.createElement('tr');const s=String(d.side||'').toLowerCase();addCell(tr,s==='bid'||s==='buy'?'买盘':'卖盘');addCell(tr,d.level);addCell(tr,d.price);addCell(tr,d.volume);db.appendChild(tr);}if(!db.children.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=4;td.className='thsdk-empty';td.textContent='暂无五档数据';tr.appendChild(td);db.appendChild(tr);}
-    const ticks=Array.isArray(stock.ticks)?stock.ticks.slice(-10):[],tb=el('thsdkTicksBody');tb.replaceChildren();for(const tick of ticks){const tr=document.createElement('tr');addCell(tr,timeText(tick.time));addCell(tr,tick.price);addCell(tr,tick.volume);addCell(tr,tick.deal_type);addCell(tr,tick.transaction_count);tb.appendChild(tr);}if(!tb.children.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=5;td.className='thsdk-empty';td.textContent='暂无逐笔数据';tr.appendChild(td);tb.appendChild(tr);}
-  }
-  function populate(){select.replaceChildren();for(const stock of snapshot.stocks){const option=document.createElement('option');option.value=String(stock.code||stock.full_code||'');option.textContent=`${text(stock.name,'未命名股票')}（${text(stock.code||stock.full_code)}）`;select.appendChild(option);}content.hidden=false;render(snapshot.stocks[0]);select.addEventListener('change',()=>render(snapshot.stocks.find(s=>String(s.code||s.full_code||'')===select.value)));message.textContent=`已加载 ${snapshot.stocks.length} 只股票的快照；不会自动刷新。`;
-  }
-  async function load(){try{const response=await fetch(file,{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data||data.mode!=='snapshot'||!Array.isArray(data.stocks))throw new Error('JSON 合约不完整');snapshot=data;if(!snapshot.stocks.length)throw new Error('stocks 为空');populate();}catch(error){content.hidden=true;message.className='thsdk-error';message.textContent=`THSDK 行情快照暂时无法加载（${text(error?.message,'未知错误')}），不影响原有行情查询、图表、行业与公告功能。`;}}
-  load();
-  }());
-	</script>
+
 	</body>
 </html>
