@@ -44,7 +44,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 
   <section id="result" hidden>
     <section class="card">
-      <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" id="stockIndustry" style="margin-top:7px">所属行业：待查询</div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
+      <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px 14px"><span id="stockIndustry">所属行业：待查询</span><span id="stockFloatCap" title="腾讯最新行情流通市值；切换历史走势时不表示历史市值">流通市值：待查询</span></div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
       <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestAmount" class="change">成交额：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
       <div id="chartPointInfo" aria-live="polite">轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。</div>
@@ -95,7 +95,7 @@ function isTradingDayWindow(){const t=shanghaiClock(),m=t.hour*60+t.minute;retur
 function marketSymbol(code){if(/^(600|601|603|605|688|689)/.test(code))return 'sh'+code;if(/^(000|001|002|003|300|301)/.test(code))return 'sz'+code;if(/^(430|831|832|833|834|835|836|837|838|839|870|871|872|873)/.test(code))return 'bj'+code;throw new Error('无法判断股票市场，请输入 6 位沪深北交所股票代码');}
 function scriptValue(url,globalName,timeout=20000){return new Promise((resolve,reject)=>{const s=document.createElement('script');let done=false;const timer=setTimeout(()=>finish(new Error('行情接口请求超时')),timeout);function finish(err){if(done)return;done=true;clearTimeout(timer);s.remove();err?reject(err):resolve(window[globalName]);}s.async=true;s.src=url;s.onload=()=>{if(window[globalName]===undefined)finish(new Error('接口返回数据为空'));else finish(null);};s.onerror=()=>finish(new Error('无法加载行情接口'));document.head.appendChild(s);});}
 function jsonp(url,paramName='cb',timeout=20000){return new Promise((resolve,reject)=>{const cb='__stockJsonp_'+Date.now()+'_'+Math.random().toString(36).slice(2);const join=url.includes('?')?'&':'?';const s=document.createElement('script');let done=false;const timer=setTimeout(()=>finish(new Error('接口请求超时')),timeout);function cleanup(){delete window[cb];s.remove();clearTimeout(timer);}function finish(err,value){if(done)return;done=true;cleanup();err?reject(err):resolve(value);}window[cb]=data=>finish(null,data);s.async=true;s.onerror=()=>finish(new Error('无法加载东方财富接口'));s.src=url+join+encodeURIComponent(paramName)+'='+encodeURIComponent(cb);document.head.appendChild(s);});}
-async function rawQuote(symbol){const raw=await scriptValue(TX_QUOTE+encodeURIComponent(symbol),'v_'+symbol);const f=String(raw).split('~');if(f.length<38)throw new Error('腾讯实时行情字段不足');return {fields:f,name:f[1],current:+f[3],prev_close:+f[4],open:+f[5],volume_raw:+f[6],change_pct:+f[32],high:+f[33],low:+f[34],amount_wan:+f[37],time:f[30]};}
+async function rawQuote(symbol){const raw=await scriptValue(TX_QUOTE+encodeURIComponent(symbol),'v_'+symbol);const f=String(raw).split('~');if(f.length<38)throw new Error('腾讯实时行情字段不足');return {fields:f,name:f[1],current:+f[3],prev_close:+f[4],open:+f[5],volume_raw:+f[6],change_pct:+f[32],high:+f[33],low:+f[34],amount_wan:+f[37],float_market_cap_yi:Number(f[44]),time:f[30]};}
 async function suggest(query){const u=new URL(EM_SUGGEST);u.searchParams.set('input',query);u.searchParams.set('type','14');u.searchParams.set('token',EM_TOKEN);const data=await jsonp(u.toString());return (data?.QuotationCodeTable?.Data||[]).filter(x=>x.Classify==='AStock');}
 async function resolveCode(query){const m=query.match(/(?<!\d)(\d{6})(?!\d)/);if(m)return m[1];const list=await suggest(query);if(!list.length)throw new Error('没有找到对应的股票名称');if(list.length===1)return list[0].Code;const choices=list.slice(0,20).map((x,i)=>`${i+1}. ${x.Code} ${x.Name}`).join('\n');const answer=prompt('找到多个结果，请输入序号：\n'+choices,'1');if(answer===null)throw new Error('已取消选择');const i=Number(answer)-1;if(!Number.isInteger(i)||i<0||i>=Math.min(list.length,20))throw new Error('选择序号无效');return list[i].Code;}
 async function fetchOneYear(symbol,year){const u=new URL(TX_KLINE);u.searchParams.set('_var','kline_day'+year);u.searchParams.set('param',`${symbol},day,${year}-01-01,${year+1}-12-31,640,`);u.searchParams.set('r',String(Math.random()));const payload=await scriptValue(u.toString(),'kline_day'+year);const rows=payload?.data?.[symbol]?.day||[];if(!rows.length)throw new Error(`${symbol} 没有返回日线数据`);return rows;}
@@ -247,6 +247,7 @@ async function fetchStockBoardReport(symbol,reportName){
   const u=new URL('https://datacenter.eastmoney.com/securities/api/data/v1/get');for(const [k,v]of Object.entries({reportName,columns:'ALL',filter:`(SECUCODE="${symbol.slice(2)}.${market}")`,pageSize:'200',pageNumber:'1',source:'HSF10',client:'PC',sortColumns:reportName==='RPT_F10_CORETHEME_BOARDTYPE'?'BOARD_RANK':'SECUCODE',sortTypes:'1'}))u.searchParams.set(k,v);
   const data=await jsonp(u.toString(),'callback',12000);if(!data?.success||!Array.isArray(data?.result?.data))throw new Error('板块接口暂未返回数据');return data.result.data;
 }
+function updateStockMarketCap(q){const cap=Number(q?.float_market_cap_yi);$('stockFloatCap').textContent='流通市值：'+(Number.isFinite(cap)&&cap>0?cap.toFixed(2)+'亿元':'暂未获取到');$('stockFloatCap').title='来源：腾讯最新行情（非历史市值）'+(q?.time?'；快照时间：'+q.time:'');}
 async function loadStockBoards(symbol){
   const request={};state.boardRequest=request;$('stockIndustry').textContent='所属行业：加载中…';$('stockTags').textContent='板块 / 标签：加载中…';
   const results=await Promise.allSettled([fetchStockBoardReport(symbol,'RPT_F10_ORG_BASICINFO'),fetchStockBoardReport(symbol,'RPT_F10_CORETHEME_BOARDTYPE')]);if(state.symbol!==symbol||state.boardRequest!==request)return;
@@ -269,16 +270,16 @@ async function refreshQuote(){
   if(!state.symbol||refreshInFlight)return;
   if(!isTradingSession()){if(state.quote)upsertTodayRow(state.quote);if(isTradingDayWindow())setStatus('午间休市中，下午开市后将继续采样。');else{setStatus('当前不在 A 股交易时段；页面仍可查看已采样的当日曲线。');stopTimer();}return;}
   refreshInFlight=true;const symbol=state.symbol;
-  try{const q=await rawQuote(symbol);if(symbol!==state.symbol)return;if(!addPoint(q)){setStatus('收到的行情快照不是今天的数据；暂未添加到当日走势图。','error');return;}setStatus(`实时行情已更新：${q.time}，当前共 ${state.chart.length} 个点。`,'ok');}
+  try{const q=await rawQuote(symbol);if(symbol!==state.symbol)return;updateStockMarketCap(q);if(!addPoint(q)){setStatus('收到的行情快照不是今天的数据；暂未添加到当日走势图。','error');return;}setStatus(`实时行情已更新：${q.time}，当前共 ${state.chart.length} 个点。`,'ok');}
   catch(e){setStatus(`实时行情暂时不可用：${e.message}；下一轮会重试。`,'error');}
   finally{refreshInFlight=false;}
 }
 async function runQuery(event){
   event?.preventDefault();stopTimer();const query=$('query').value.trim();if(!query)return;
-  clearChartSelection();state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
+  clearChartSelection();$('stockFloatCap').textContent='流通市值：加载中…';state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
   try{
     const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;void loadStockBoards(symbol);let q=null;
-    try{q=await rawQuote(symbol);state.name=q.name||code;state.quote=q;}catch(e){state.name=code;console.warn('获取实时快照失败',e);}saveStockHistory(query,code,state.name);
+    try{q=await rawQuote(symbol);state.name=q.name||code;state.quote=q;}catch(e){state.name=code;console.warn('获取实时快照失败',e);}updateStockMarketCap(q);saveStockHistory(query,code,state.name);
     const now=dayShanghai(),from=$('start').value,to=$('end').value;
     const start=from||new Date(Date.now()-120*86400000).toISOString().slice(0,10),end=to||now;
     const calcStart=new Date(new Date(start+'T00:00:00').getTime()-20*86400000).toISOString().slice(0,10);
