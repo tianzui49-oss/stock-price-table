@@ -146,8 +146,14 @@ function mergePoints(...groups){const map=new Map();for(const group of groups)fo
 function normalizeChartTime(value){const s=String(value||'');if(/^\d{14}$/.test(s))return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(8,10)}:${s.slice(10,12)}:${s.slice(12,14)}`;if(/^\d{12}$/.test(s))return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(8,10)}:${s.slice(10,12)}:00`;return s;}
 function loadChart(code,day){try{const d=JSON.parse(localStorage.getItem(`stock-chart-${code}-${day}`)||'[]');return Array.isArray(d)?d.map(p=>({...p,time:normalizeChartTime(p.time)})).filter(p=>p.time&&Number.isFinite(Number(p.price))&&Number(p.price)>0):[];}catch{return [];}}
 function storeChart(code,day,points){try{localStorage.setItem(`stock-chart-${code}-${day}`,JSON.stringify(points));}catch{}}
+async function ensureChartReference(day){
+  if(chartReference(day).prev>0)return;
+  const symbol=state.symbol,start=new Date(new Date(day+'T00:00:00Z').getTime()-370*86400000).toISOString().slice(0,10);
+  try{const rows=await fetchHistory(symbol,start,day);if(state.symbol===symbol)for(const row of rows){if(row.prev_close>0||!state.dailyByDate[row.date])state.dailyByDate[row.date]=row;}}catch(e){console.warn('所选日期昨收价暂不可用',e);}
+}
 async function loadSelectedChartDay(){
   const day=$('chartDate').value;if(!day||!state.code)return;
+  const symbol=state.symbol;await ensureChartReference(day);if(symbol!==state.symbol||$('chartDate').value!==day)return;
   if(!state.intradayByDate[day]){setStatus(`正在查询 ${day} 的历史分钟线…`);try{const bars=await fetchMinuteBars(state.symbol,'5',day.replaceAll('-',''),day.replaceAll('-',''));const sameDay=bars.filter(p=>p.time.slice(0,10)===day);if(sameDay.length)state.intradayByDate[day]=sameDay;}catch(e){console.warn('历史分钟线不可用',e);setChartDay(day);setStatus(`分钟线加载失败：${e.message}；请稍后重试。`,'error');return;}}
   setChartDay(day);setStatus(state.chart.length?`${day} 的历史分时已加载，共 ${state.chart.length} 个点。`:`${day} 没有可用历史分钟数据；这一天可能超出接口保留范围。`,state.chart.length?'ok':'');
 }
@@ -157,7 +163,7 @@ function drawChart(){
   const svg=$('chart');svg.replaceChildren();const pts=state.chart;
   if(!pts.length){state.chartGeometry=null;const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('x','500');t.setAttribute('y','215');t.setAttribute('text-anchor','middle');t.setAttribute('fill','#78869b');t.textContent='该日暂无可用分时数据';svg.appendChild(t);resetChartPointInfo();return;}
   const ns='http://www.w3.org/2000/svg',W=1000,H=420,L=76,R=25,T=25,B=90,prices=pts.map(x=>Number(x.price));
-  const reference=state.chartDate===dayShanghai()?chartReference(state.chartDate).prev:NaN;
+  const reference=chartReference(state.chartDate).prev;
   const hasReference=Number.isFinite(reference)&&reference>0;
   let lo=Math.min(...prices,hasReference?reference:Infinity),hi=Math.max(...prices,hasReference?reference:-Infinity);
   if(lo===hi){const p=Math.max(hi*.002,.01);lo-=p;hi+=p;}else{const p=(hi-lo)*.12;lo-=p;hi+=p;}
@@ -183,7 +189,7 @@ function drawChart(){
   state.chartGeometry={pts,x,y,L,R,T,B,W,H,fontSize};
   const activeTime=hoveredPointTime;if(activeTime){const i=pts.findIndex(p=>p.time===activeTime);if(i>=0)showChartPoint(i);else{hoveredPointTime=null;pinnedPointTime=null;resetChartPointInfo();}}else resetChartPointInfo();
 }
-function chartReference(day){const row=state.dailyByDate?.[day]||{};if(day===dayShanghai()&&state.quote)return {prev:Number(state.quote.prev_close),open:Number(state.quote.open)};return {prev:row.prev_close==null?NaN:Number(row.prev_close),open:row.open==null?NaN:Number(row.open)};}
+function chartReference(day){const row=state.dailyByDate?.[day]||{};if(day===dayShanghai()&&state.quote&&normalizeChartTime(state.quote.time).slice(0,10)===day)return {prev:Number(state.quote.prev_close),open:Number(state.quote.open)};return {prev:row.prev_close==null?NaN:Number(row.prev_close),open:row.open==null?NaN:Number(row.open)};}
 function signedPrice(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${Math.abs(n).toFixed(2)}元`;}
 function formatTurnover(n){if(!Number.isFinite(n))return '—';return Math.abs(n)>=1e8?`${(n/1e8).toFixed(2)}亿`:`${(n/1e4).toFixed(2)}万`;}
 function signedTurnover(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${formatTurnover(Math.abs(n))}`;}
