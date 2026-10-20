@@ -47,7 +47,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
       <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" id="stockIndustry" style="margin-top:7px">所属行业：待查询</div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
       <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestAmount" class="change">成交额：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
-      <div id="chartPointInfo" aria-live="polite">按住并滑动走势图查看数值和横轴时间，松手立即恢复最新值；鼠标也可悬停查看。</div>
+      <div id="chartPointInfo" aria-live="polite">轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。</div>
       <div class="chart-note" id="chartInfo">近期日期显示历史分钟线；当前交易日会用历史分钟线补齐开盘以来的曲线，并叠加页面实时采样。超过数据源保留范围的分时历史无法补取。</div>
     </section>
 
@@ -82,7 +82,7 @@ const NEGATIVE_WORDS=['减持','预亏','亏损','业绩下滑','下降','处罚
 const URGENT_WORDS=['立案','被立案','立案调查','涉嫌违法违规','调查','监管','监管函','问询函','处罚','行政处罚','纪律处分','警示','退市','重大违法','爆雷','违约','停牌','重大诉讼','被ST','冻结','重大风险','事故'];
 const ANN_WORDS=[...URGENT_WORDS,'减持','增持','回购','质押','担保','诉讼','仲裁','业绩预告','业绩快报','年报','半年报','季报','分红','重大合同','重大资产重组','收购','出售','解禁','停复牌'];
 let state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};
-let refreshInFlight=false,hoveredPointTime=null;
+let refreshInFlight=false,hoveredPointTime=null,pinnedPointTime=null;
 const $=id=>document.getElementById(id);
 function readStockHistory(){try{const items=JSON.parse(localStorage.getItem(STOCK_HISTORY_KEY)||'[]');return Array.isArray(items)?items.filter(x=>x&&typeof x.code==='string').slice(0,20):[];}catch{return [];}}
 function renderStockHistory(){const select=$('historySelect'),items=readStockHistory();select.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=items.length?'选择最近输入的股票…':'暂无股票历史记录';select.appendChild(first);for(const item of items){const option=document.createElement('option');option.value=item.code;option.textContent=`${item.code}｜${item.name||item.query||item.code}${item.query&&item.query!==item.code&&item.query!==item.name?`（输入：${item.query}）`:''}`;select.appendChild(option);}$('clearHistoryBtn').disabled=!items.length;}
@@ -151,7 +151,7 @@ async function loadSelectedChartDay(){
   if(!state.intradayByDate[day]){setStatus(`正在查询 ${day} 的历史分钟线…`);try{const bars=await fetchMinuteBars(state.symbol,'5',day.replaceAll('-',''),day.replaceAll('-',''));const sameDay=bars.filter(p=>p.time.slice(0,10)===day);if(sameDay.length)state.intradayByDate[day]=sameDay;}catch(e){console.warn('历史分钟线不可用',e);setChartDay(day);setStatus(`分钟线加载失败：${e.message}；请稍后重试。`,'error');return;}}
   setChartDay(day);setStatus(state.chart.length?`${day} 的历史分时已加载，共 ${state.chart.length} 个点。`:`${day} 没有可用历史分钟数据；这一天可能超出接口保留范围。`,state.chart.length?'ok':'');
 }
-function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){hoveredPointTime=null;}state.chartDate=day;$('chartDate').value=day;state.chart=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day));drawChart();updateQuoteHeader();const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分钟线（并叠加实时采样）':'历史分钟线'}，共 ${count} 个点。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
+function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){clearChartSelection();}state.chartDate=day;$('chartDate').value=day;state.chart=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day));drawChart();updateQuoteHeader();const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分钟线（并叠加实时采样）':'历史分钟线'}，共 ${count} 个点。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
 function addPoint(q){if(!q.time||q.time.slice(0,8)!==dayShanghai().replaceAll('-',''))return false;const day=q.time.slice(0,4)+'-'+q.time.slice(4,6)+'-'+q.time.slice(6,8),seconds=q.time.length>=14?q.time.slice(12,14):'00',hands=volumeToHand(q.volume_raw,state.symbol,q.low,q.high,q.amount_wan).hands,amountWan=Number(q.amount_wan),point={time:`${day} ${q.time.slice(8,10)}:${q.time.slice(10,12)}:${seconds}`,price:q.current,volume_hand:hands,amount_wan:Number.isFinite(amountWan)?amountWan:null,amount:Number.isFinite(amountWan)?amountWan*10000:null,isLive:true};state.quote=q;const merged=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day),[point]);storeChart(state.code,day,merged);if(state.chartDate===day){state.chart=merged;drawChart();updateQuoteHeader();setChartDay(day);}state.quote=q;upsertTodayRow(q);return true;}
 function drawChart(){
   const svg=$('chart');svg.replaceChildren();const pts=state.chart;
@@ -171,20 +171,20 @@ function drawChart(){
   svg.append(el('line',{id:'chartCrossV',x1:L,y1:T,x2:L,y2:H-B,stroke:'#d64c4c','stroke-width':1.5,'stroke-dasharray':'6 5','pointer-events':'none',display:'none'}));
   svg.append(el('line',{id:'chartCrossH',x1:L,y1:T,x2:W-R,y2:T,stroke:'#d64c4c','stroke-width':1,'stroke-dasharray':'5 5','pointer-events':'none',display:'none'}));
   svg.append(el('circle',{id:'chartCrossDot',cx:L,cy:T,r:6,fill:'#d64c4c',stroke:'#fff','stroke-width':2,'pointer-events':'none',display:'none'}));
-  // Reserve a separate lane below the axis for a legible, edge-clamped selected time.
-  const fontSize=Math.max(17,12*W/(svg.getBoundingClientRect().width||W));
+  // Match the ordinary axis ticks, in a separate edge-clamped lane below them.
+  const fontSize=13;
   const timeLabel=el('g',{id:'chartCrossTime','pointer-events':'none',display:'none'});
-  timeLabel.append(el('rect',{id:'chartCrossTimeBox',y:H-50,height:fontSize+10,rx:5,fill:'#d64c4c'}));
-  timeLabel.append(el('text',{id:'chartCrossTimeText',y:H-45+fontSize*.8,'text-anchor':'middle',fill:'#fff','font-size':fontSize,'font-weight':600}));
+  timeLabel.append(el('rect',{id:'chartCrossTimeBox',y:H-50,height:fontSize+10,rx:5,fill:'transparent'}));
+  timeLabel.append(el('text',{id:'chartCrossTimeText',y:H-45+fontSize*.8,'text-anchor':'middle',fill:'#68758a','font-size':fontSize,'font-weight':400}));
   svg.append(timeLabel);
   state.chartGeometry={pts,x,y,L,R,T,B,W,H,fontSize};
-  const activeTime=hoveredPointTime;if(activeTime){const i=pts.findIndex(p=>p.time===activeTime);if(i>=0)showChartPoint(i);else{hoveredPointTime=null;resetChartPointInfo();}}else resetChartPointInfo();
+  const activeTime=hoveredPointTime;if(activeTime){const i=pts.findIndex(p=>p.time===activeTime);if(i>=0)showChartPoint(i);else{hoveredPointTime=null;pinnedPointTime=null;resetChartPointInfo();}}else resetChartPointInfo();
 }
 function chartReference(day){const row=state.dailyByDate?.[day]||{};if(day===dayShanghai()&&state.quote)return {prev:Number(state.quote.prev_close),open:Number(state.quote.open)};return {prev:row.prev_close==null?NaN:Number(row.prev_close),open:row.open==null?NaN:Number(row.open)};}
 function signedPrice(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${Math.abs(n).toFixed(2)}元`;}
 function formatTurnover(n){if(!Number.isFinite(n))return '—';return Math.abs(n)>=1e8?`${(n/1e8).toFixed(2)}亿`:`${(n/1e4).toFixed(2)}万`;}
 function signedTurnover(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${formatTurnover(Math.abs(n))}`;}
-function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='按住并滑动走势图查看数值和横轴时间，松手立即恢复最新值；鼠标也可悬停查看。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();}
+function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();}
 function cumulativeAt(index){
   const p=state.chart[index];if(!p)return {amount:null,volume:null};
   if(p.isLive&&p.amount_wan!==null&&p.amount_wan!==undefined&&Number.isFinite(Number(p.amount_wan)))return {amount:Number(p.amount_wan)*10000,volume:p.volume_hand!==null&&p.volume_hand!==undefined&&Number.isFinite(Number(p.volume_hand))?Number(p.volume_hand):null};
@@ -218,7 +218,7 @@ function updateChartPointInfo(index){
   if(Number.isFinite(amount)&&amount>0&&Number.isFinite(volume)&&volume>0){const gap=volume*Number(p.price)*100-amount;parts.push(`差（累计量×价−累计成交额）${signedTurnover(gap)}（${pct(gap/amount*100,2)}）`);}else parts.push('差：该点缺少累计成交量或成交额');
   $('chartPointInfo').textContent=parts.join(' ｜ ');
 }
-function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L||px>g.W-g.R)return null;return Math.max(0,Math.min(g.pts.length-1,Math.round((px-g.L)/(g.W-g.L-g.R)*(g.pts.length-1))));}
+function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L-.5||px>g.W-g.R+.5)return null;return Math.max(0,Math.min(g.pts.length-1,Math.round((px-g.L)/(g.W-g.L-g.R)*(g.pts.length-1))));}
 function updateQuoteHeader(index){
   const activeTime=hoveredPointTime;
   if(!Number.isInteger(index)&&activeTime)index=state.chart.findIndex(p=>p.time===activeTime);
@@ -275,7 +275,7 @@ async function refreshQuote(){
 }
 async function runQuery(event){
   event?.preventDefault();stopTimer();const query=$('query').value.trim();if(!query)return;
-  hoveredPointTime=null;state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
+  clearChartSelection();state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
   try{
     const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;void loadStockBoards(symbol);let q=null;
     try{q=await rawQuote(symbol);state.name=q.name||code;state.quote=q;}catch(e){state.name=code;console.warn('获取实时快照失败',e);}saveStockHistory(query,code,state.name);
@@ -302,34 +302,52 @@ async function runQuery(event){
 renderStockHistory();$('historySelect').addEventListener('change',event=>{if(event.target.value){$('query').value=event.target.value;setStatus('已填入历史股票代码；点击“查询 / 开始”即可查询。');}});$('clearHistoryBtn').addEventListener('click',()=>{try{localStorage.removeItem(STOCK_HISTORY_KEY);}catch{}renderStockHistory();setStatus('已清除本浏览器保存的股票输入历史。');});
 $('queryForm').addEventListener('submit',runQuery);$('chartDate').addEventListener('change',loadSelectedChartDay);$('stopBtn').addEventListener('click',()=>{stopTimer();setStatus('已停止自动刷新；点击“查询 / 开始”可重新查询。');});$('csvBtn').addEventListener('click',downloadCSV);$('mdBtn').addEventListener('click',()=>download(`${state.code}_量价报告.md`,makeReport(),'text/markdown;charset=utf-8'));
 $('noNews').addEventListener('change',()=>{if(state.code&&$('noNews').checked){state.news=[];state.anns=[];renderNews();}});
-let chartGesture=null;
-function clearChartSelection(){hoveredPointTime=null;resetChartPointInfo();}
+let chartGesture=null,suppressChartHover=false,chartHoverResume=null;
+const CHART_DRAG_THRESHOLD=8; // CSS pixels: tolerate tiny finger jitter, not a real swipe.
+function clearChartSelection(){hoveredPointTime=null;pinnedPointTime=null;resetChartPointInfo();}
+function trackChartDrag(event){
+  if(Math.hypot(event.clientX-chartGesture.startX,event.clientY-chartGesture.startY)>=CHART_DRAG_THRESHOLD)chartGesture.dragged=true;
+}
 function finishChartGesture(event){
   if(!chartGesture||event&&event.pointerId!==chartGesture.pointerId)return;
-  const pointerId=chartGesture.pointerId;chartGesture=null;
-  if($('chart').hasPointerCapture(pointerId))$('chart').releasePointerCapture(pointerId);
-  clearChartSelection();
+  const gesture=chartGesture;
+  if(event?.type==='pointerup')trackChartDrag(event);
+  chartGesture=null; // Clear before releasing capture; lostpointercapture must not undo a tap.
+  suppressChartHover=true;chartHoverResume=event?{x:event.clientX,y:event.clientY}:null;
+  if($('chart').hasPointerCapture(gesture.pointerId))$('chart').releasePointerCapture(gesture.pointerId);
+  const i=event?.type==='pointerup'&&!gesture.dragged?chartIndexAt(event):null;
+  if(i!==null&&state.chart[i].time!==gesture.previousPin){
+    pinnedPointTime=hoveredPointTime=state.chart[i].time;showChartPoint(i);
+  }else clearChartSelection();
 }
 $('chart').addEventListener('pointerdown',event=>{
   if(chartGesture||event.isPrimary===false||(event.pointerType==='mouse'&&event.button!==0))return;
   const i=chartIndexAt(event);if(i===null)return;
-  chartGesture={pointerId:event.pointerId};
+  chartGesture={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,dragged:false,previousPin:pinnedPointTime};
+  suppressChartHover=false;pinnedPointTime=null;
   $('chart').setPointerCapture(event.pointerId);
   hoveredPointTime=state.chart[i].time;showChartPoint(i);
 });
 $('chart').addEventListener('pointermove',event=>{
   if(chartGesture&&chartGesture.pointerId!==event.pointerId)return;
-  if(!chartGesture&&event.pointerType!=='mouse')return;
+  if(chartGesture)trackChartDrag(event);
+  else {
+    if(event.pointerType!=='mouse'||pinnedPointTime)return;
+    if(suppressChartHover){
+      if(!chartHoverResume||Math.hypot(event.clientX-chartHoverResume.x,event.clientY-chartHoverResume.y)<CHART_DRAG_THRESHOLD)return;
+      suppressChartHover=false;
+    }
+  }
   const i=chartIndexAt(event);
   if(i!==null){hoveredPointTime=state.chart[i].time;showChartPoint(i);}
   else if(!chartGesture)clearChartSelection();
 });
-$('chart').addEventListener('pointerleave',()=>{if(!chartGesture)clearChartSelection();});
+$('chart').addEventListener('pointerleave',()=>{if(!chartGesture){suppressChartHover=false;if(!pinnedPointTime)clearChartSelection();}});
 $('chart').addEventListener('pointerup',finishChartGesture);
 $('chart').addEventListener('pointercancel',finishChartGesture);
 $('chart').addEventListener('lostpointercapture',finishChartGesture);
-window.addEventListener('blur',()=>{if(chartGesture)finishChartGesture();else clearChartSelection();});
-// No click-to-pin handler: the synthetic click after a swipe must not reselect a point.
+window.addEventListener('blur',()=>{if(chartGesture)finishChartGesture();else if(!pinnedPointTime)clearChartSelection();});
+// Tap toggling happens only on pointerup, never on the synthetic click after a swipe.
 </script>
 </body>
 </html>
