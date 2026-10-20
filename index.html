@@ -54,7 +54,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     </section>
 
     <section class="card" id="thsdkTicks" aria-labelledby="thsdkTitle">
-      <div class="section-head" style="flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap"><h2 id="thsdkTitle">成交明细</h2><span class="small" id="thsdkLoadedSummary" aria-live="polite" aria-atomic="true" title="仅合计当前明细列表已显示记录的真实成交笔数（含滚动区域），不代表全天完整成交；笔数缺失的记录不计入已知合计。">当前已显示累计 0 笔 · 合计 0 手</span></div><span class="small" id="thsdkStockLabel">跟随上方查询股票</span></div>
+      <div class="section-head" style="flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap"><h2 id="thsdkTitle">成交明细</h2><span class="small" id="thsdkLoadedSummary" aria-live="polite" aria-atomic="true" title="直接显示接口返回的累计成交笔数（transaction_count），随刷新更新；缺失时保留同一股票同日最近有效返回值，不以记录行数或成交手数代替。">累计成交 —笔</span></div><span class="small" id="thsdkStockLabel">跟随上方查询股票</span></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span id="thsdkMode" class="small">默认显示最新可用成交，选点查看对应时刻。</span><button class="secondary" id="tickLatestBtn" type="button">返回最新</button></div>
       <p id="thsdkStatus" class="thsdk-meta" role="status">查询后显示最新可用成交。</p>
       <div class="thsdk-detail-grid">
@@ -357,15 +357,17 @@ function tickClock(value){return typeof value==='number'&&value>=1500000000&&val
 function tickText(value){return value==null?'—':String(value);}
 function tickLots(value){if(value==null||String(value).trim()==='')return '—';const shares=Number(value);return Number.isFinite(shares)?String(shares/100):'—';}
 const tickState={enabled:false,timer:null,debounce:null,controller:null,key:'',generation:0,cache:new Map(),latestCache:new Map(),loadingDay:'',signature:'',viewRows:[]};
+const tickReturnedCounts=new Map();
 function tickCountTotalText(rawRows=[]){
-  const {rows,counts}=tickCountRows(rawRows);let total=0,missing=0;
-  for(const row of rows){const count=counts.get(row);if(count===null)missing++;else total+=count;}
-  return `当前已显示${missing?'已知':''}累计 ${total.toLocaleString('zh-CN')} 笔${missing?`（${missing.toLocaleString('zh-CN')} 条记录笔数缺失）`:''}`;
+  const rows=[...rawRows].sort((a,b)=>(Number(b.time)||0)-(Number(a.time)||0));
+  const day=(rows.length?tickRowBeijingDay(rows[0]):'')||state.chartDate||dayShanghai(),key=`${state.code}|${day}`;
+  const row=rows.find(r=>(!tickRowBeijingDay(r)||tickRowBeijingDay(r)===day)&&tickCountNumber(r.transaction_count)!==null);
+  if(row){const time=Number(row.time)||0,previous=tickReturnedCounts.get(key);if(!previous||time>=previous.time)tickReturnedCounts.set(key,{count:tickCountNumber(row.transaction_count),time});}
+  const latest=tickReturnedCounts.get(key);
+  return latest?`${row===rows[0]&&latest.time===(Number(row?.time)||0)?'累计成交':'最新可用累计成交'} ${latest.count.toLocaleString('zh-CN')} 笔`:'累计成交 —笔';
 }
 function tickLoadedSummary(rows=[]){
-  let shares=0,missing=0;for(const row of rows){const value=row.volume,n=Number(value);if(value==null||String(value).trim()===''||!Number.isFinite(n))missing++;else shares+=n;}
-  const format=n=>n.toLocaleString('zh-CN',{maximumFractionDigits:8});
-  $('thsdkLoadedSummary').textContent=`${tickCountTotalText(rows)} · ${missing?'已知量合计':'合计'} ${format(shares/100)} 手${missing?`（${format(missing)} 条记录量缺失）`:''}`;
+  $('thsdkLoadedSummary').textContent=tickCountTotalText(rows);
 }
 function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary(); }
 function tickStop(){depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
