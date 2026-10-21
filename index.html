@@ -388,7 +388,7 @@ function chartReference(day){const row=state.dailyByDate?.[day]||{};if(day===day
 function signedPrice(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${Math.abs(n).toFixed(2)}元`;}
 function formatTurnover(n){if(!Number.isFinite(n))return '—';return Math.abs(n)>=1e8?`${(n/1e8).toFixed(2)}亿`:`${(n/1e4).toFixed(2)}万`;}
 function signedTurnover(n){if(!Number.isFinite(n))return '—';const sign=n>0?'+':n<0?'−':'';return `${sign}${formatTurnover(Math.abs(n))}`;}
-function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();tickSync();}
+function resetChartPointInfo(){for(const id of ['chartCrossV','chartCrossH','chartCrossDot','chartCrossTime'])$( 'chart').querySelector(`#${id}`)?.setAttribute('display','none');$('chartPointInfo').textContent='轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。';if(state.chart.length)updateChartPointInfo(state.chart.length-1);updateQuoteHeader();bookRecorder.viewAt(hoveredPointTime||(state.chartDate&&state.chartDate!==dayShanghai()?state.chartDate+' 15:00:00':null));tickSync();}
 function cumulativeAt(index){
   const p=state.chart[index];if(!p)return {amount:null,volume:null};
   if(p.isLive&&p.amount_wan!==null&&p.amount_wan!==undefined&&Number.isFinite(Number(p.amount_wan)))return {amount:Number(p.amount_wan)*10000,volume:p.volume_hand!==null&&p.volume_hand!==undefined&&Number.isFinite(Number(p.volume_hand))?Number(p.volume_hand):null};
@@ -423,6 +423,7 @@ function updateChartPointInfo(index){
   const zeroGapPrice=Number.isFinite(amount)&&amount>=0&&Number.isFinite(volume)&&volume>0?amount/(volume*100):null;
   parts.push(Number.isFinite(zeroGapPrice)?`零线价格 ${zeroGapPrice.toFixed(4)}元`:'零线价格：暂无有效累计量额');
   $('chartPointInfo').textContent=parts.join(' ｜ ');
+  bookRecorder.viewAt(hoveredPointTime||(state.chartDate&&state.chartDate!==dayShanghai()?p.time:null));
 }
 function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L-.5||px>g.W-g.R+.5)return null;return Math.max(0,Math.min(g.pts.length-1,Math.round((px-g.L)/(g.W-g.L-g.R)*(g.pts.length-1))));}
 // THS vr(5): current average volume/minute divided by the prior five sessions' average.
@@ -525,10 +526,10 @@ async function refreshQuote(){
   finally{refreshInFlight=false;}
 }
 async function runQuery(event){
-  event?.preventDefault();tickReset();stopTimer();const query=$('query').value.trim();if(!query)return;
+  event?.preventDefault();const recordingStartedAt=new Date().toISOString();tickReset();stopTimer();const query=$('query').value.trim();if(!query)return;
   clearChartSelection();$('stockFloatCap').textContent='流通市值：加载中…';state={code:'',symbol:'',name:'',rows:[],dailyByDate:{},chart:[],intradayByDate:{},chartDate:'',quote:null,news:[],anns:[],timer:null,report:''};let minuteError='';$('result').hidden=false;$('csvBtn').disabled=true;$('mdBtn').disabled=true;setStatus('正在解析股票并获取行情数据…');
   try{
-    const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;state.chartDate=$('end').value&&$('end').value<dayShanghai()?$('end').value:dayShanghai();void loadStockBoards(symbol);let q=null;
+    const code=await resolveCode(query),symbol=marketSymbol(code);state.code=code;state.symbol=symbol;state.chartDate=$('end').value&&$('end').value<dayShanghai()?$('end').value:dayShanghai();await bookRecorder.begin(code,recordingStartedAt);void loadStockBoards(symbol);let q=null;
     try{q=await rawQuote(symbol);state.name=q.name||code;state.quote=q;}catch(e){state.name=code;console.warn('获取实时快照失败',e);}updateStockMarketCap(q);saveStockHistory(query,code,state.name);
     const now=dayShanghai(),from=$('start').value,to=$('end').value;
     const start=from||new Date(Date.now()-120*86400000).toISOString().slice(0,10),end=to||now;
@@ -604,9 +605,9 @@ function tickRenderRowStats(rows=[],counts){
   line(`仅统计当前明细已加载的 ${stats.total} 条记录；每行手数÷该行笔数＝折算单笔手数，1 笔时保留真实手数；多笔聚合无法还原其中真实单笔极值。按未四舍五入的折算单笔手数选极值；并列按表格顺序取首条最小、末条最大，各只剔除一条。单笔金额＝成交价×成交股数÷笔数÷10000${stats.skipped?`；${stats.skipped} 条价格、成交量或笔数无效（含零笔、未知笔数），未计入统计`:''}。`);
 }
 function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary();tickRenderRowStats(); }
-function tickStop(){depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
+function tickStop(){bookRecorder.pause();depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
 function tickReset(){tickStop();tickState.key='';tickState.cache.clear();tickState.loadingDay='';tickState.viewRows=[];tickClear();depthReset();$('thsdkStockLabel').textContent='正在查询…';$('thsdkStatus').textContent='等待加载成交明细。';}
-function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(document.hidden||!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
+function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(document.hidden||!marketPhase().open)return;bookRecorder.heartbeat();if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
 function tickQuery(){
   if(!/^\d{6}$/.test(state.code)||tickState.loadingDay)return null;
   const pastDay=state.chartDate&&state.chartDate!==dayShanghai(),selected=hoveredPointTime||(pastDay?(state.chart.at(-1)?.time||`${state.chartDate} 15:00:00`):null);
@@ -749,29 +750,289 @@ function depthSync(force=false,manual=false){
     depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
   }).catch(()=>{if(generation===depthState.generation&&code===state.code)depthShow('读取失败，请稍后重试。');}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}depthShow();});
 }
-// Browser-only recorder. No independent poller or background service.
-const bookRecorder=(()=>{
-  let dbPromise,queue=Promise.resolve(),enabled=true,lastError='',recent=[];
-  const last=new Map(),knownTicks=new Map();
-  const box=document.createElement('section');box.className='card';box.id='bookRecorder';
-  box.innerHTML=`<div class="section-head"><h2>五档与成交记录</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">自动保存当前查询股票的五档快照、普通逐笔原始行及读取时间。五档按同方向、同价格比较；移入 / 移出前五档不当作新增 / 撤单。成交与盘口只按时间并列，不强行归因。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button></div><div class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>方向 / 价格</th><th>前量（手）</th><th>后量（手）</th><th>净变化（手）</th><th>说明</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">仅记录页面实际收到的数据；关闭页面、停止刷新、切到历史选点、浏览器后台节流或断网会产生缺口，无法补回历史五档。五档源不含盘口时间，读取时间不是交易所事件时间；普通逐笔约 3 秒聚合，不能逐笔对应撤单，也不计算真实撤单率。原始数量保留为股；导出含数据日期、读取时间、源返回时间及原始字段。请定期导出，浏览器清理数据会删除本地记录；不同设备不共享。</p>`;
-  $('thsdkTicks').after(box);
-  function db(){if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{if(!window.indexedDB){reject(Error('此浏览器不支持 IndexedDB'));return;}const r=indexedDB.open('thsdk-orderbook-recorder-v1',1);r.onupgradeneeded=()=>{for(const [name,key,auto]of [['events','id',true],['ticks','id',false],['latest','code',false]]){const s=r.result.createObjectStore(name,{keyPath:key,autoIncrement:auto});if(name!=='latest')s.createIndex('code','code');}};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.onblocked=()=>reject(Error('记录库被其他页面阻塞，请关闭旧页面后刷新'));});return dbPromise;}
-  function request(r){return new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);});}
-  function complete(tx){return new Promise((ok,no)=>{tx.oncomplete=ok;tx.onerror=()=>no(tx.error);tx.onabort=()=>no(tx.error||Error('保存中断'));});}
-  function compare(before,after){const map=rows=>{const m=new Map();for(const r of rows||[]){const side=['bid','buy'].includes(String(r.side).toLowerCase())?'bid':['ask','sell'].includes(String(r.side).toLowerCase())?'ask':null;const p=Number(r.price),v=Number(r.volume);if(side&&r.price!=null&&p>0&&r.volume!=null&&Number.isFinite(v)&&v>=0)m.set(`${side}|${p}`,{side,price:p,volume:v});}return m;},a=map(before),b=map(after),out=[];for(const k of new Set([...a.keys(),...b.keys()])){const x=a.get(k),y=b.get(k);if(x&&y&&x.volume===y.volume)continue;out.push({side:(y||x).side,price:(y||x).price,before_shares:x?.volume??null,after_shares:y?.volume??null,delta_shares:x&&y?y.volume-x.volume:null,note:!x?'进入可见五档（不等于新增委托）':!y?'离开可见五档（不等于撤单）':'同价位净变化（不等于撤单）'});}return out;}
-  async function save(kind,payload,query,receivedAt){const d=await db(),code=payload.code;let prev=last.get(code);if(kind==='depth'&&!prev){prev=await request(d.transaction('latest').objectStore('latest').get(code));if(prev)last.set(code,prev);}
-    let known;if(kind!=='depth'){known=knownTicks.get(code);if(!known){known=new Set(await request(d.transaction('ticks').objectStore('ticks').index('code').getAllKeys(code)));knownTicks.set(code,known);}}
-    const added=[];const tx=d.transaction(['events','ticks','latest'],'readwrite'),done=complete(tx),events=tx.objectStore('events');
-    if(kind==='depth'){const day=new Date(new Date(receivedAt).getTime()+8*3600000).toISOString().slice(0,10),sameDay=prev?.day===day,elapsed=sameDay?new Date(receivedAt)-new Date(prev.received_at):null,changes=sameDay?compare(prev.rows,payload.rows):[],record={kind,code,day,received_at:receivedAt,source_fetched_at:payload.fetched_at||null,previous_received_at:sameDay?prev.received_at:null,interval_ms:elapsed,gap_warning:elapsed!==null&&elapsed>Math.max(5000,(Number($('interval').value)||1)*3000),unchanged:sameDay&&JSON.stringify(prev.rows)===JSON.stringify(payload.rows),changes,payload};events.add(record);tx.objectStore('latest').put({code,day,rows:payload.rows,received_at:receivedAt});await done;last.set(code,{code,day,rows:payload.rows,received_at:receivedAt});recent=changes.map(c=>({...c,received_at:receivedAt,gap:record.gap_warning})).concat(recent).slice(0,30);
-    }else{const {rows,...metadata}=payload,occurrences=new Map();for(const row of rows){const fingerprint=tickRowFingerprint(row),n=(occurrences.get(fingerprint)||0)+1;occurrences.set(fingerprint,n);const id=JSON.stringify([code,fingerprint,n]);if(known.has(id))continue;added.push(id);const r=tx.objectStore('ticks').add({id,code,day:tickRowBeijingDay(row)||null,first_received_at:receivedAt,source_fetched_at:payload.fetched_at||null,row});r.onerror=e=>{if(r.error?.name==='ConstraintError'){e.preventDefault();e.stopPropagation();}};}events.add({kind:'tick_response',code,received_at:receivedAt,query,row_count:rows.length,payload_metadata:metadata});await done;for(const id of added)known.add(id);}
+/* Pure, deterministic estimator for five-level book flow. */
+const BookFlowCalculator = (() => {
+  const num = v => typeof v === 'number' ? v : Number(v);
+  const ms = v => { if (typeof v === 'number') return v < 2e11 ? v * 1000 : v; const x=Date.parse(v); return Number.isFinite(x)?x:NaN; };
+  const iso = t => new Date(t).toISOString();
+  const beijing = t => new Date(t+8*3600000).toISOString().replace('T',' ');
+  const dayOf = t => beijing(t).slice(0,10);
+  const minuteOf = t => { const s=beijing(t); return +s.slice(11,13)*60 + +s.slice(14,16) + +s.slice(17,19)/60; };
+  const phaseOf = t => { const m=minuteOf(t); return m>=570&&m<=690?'am':m>=780&&m<897?'pm':null; };
+  function parseLocal(s) { if(typeof s==='number') return ms(s); let z=String(s??'').trim().replace(' ','T'); if(/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(z))z+=':00'; if(!/[zZ]|[+-]\d\d:?\d\d$/.test(z))z+='+08:00'; const x=Date.parse(z); return Number.isFinite(x)?x:NaN; }
+  function rowsOf(e) {
+    const rows=e&&e.payload&&Array.isArray(e.payload.rows)?e.payload.rows:[], a={bid:[],ask:[]};
+    for(const r of rows) {
+      if(!r||typeof r!=='object') continue;
+      const side=String(r.side??r.type??'').toLowerCase(), level=num(r.level??r.index);
+      const pv=r.price, vv=r.shares!==undefined?r.shares:r.volume!==undefined?r.volume:r.quantity!==undefined?r.quantity:r.amount;
+      if((side!=='bid'&&side!=='ask')||!Number.isInteger(level)||level<1||level>5||typeof pv==='boolean'||pv===null||pv===''||!Number.isFinite(num(pv))||num(pv)<=0||typeof vv==='boolean'||vv===null||vv===''||!Number.isFinite(num(vv))||num(vv)<0||!Number.isInteger(num(vv))) continue;
+      a[side].push({side,level,price:num(pv),shares:num(vv)});
+    }
+    const validSide=s=>a[s].length===5&&new Set(a[s].map(x=>x.level)).size===5&&new Set(a[s].map(x=>x.price)).size===5&&a[s].every(x=>x.level>=1&&x.level<=5);
+    const valid=rows.length===10&&validSide('bid')&&validSide('ask');
+    if(valid && Math.max(...a.bid.map(x=>x.price))>=Math.min(...a.ask.map(x=>x.price))) return {a,valid:false};
+    for(const s of ['bid','ask']) a[s].sort((x,y)=>x.level-y.level);
+    return {a,valid};
   }
-  async function refresh(){try{const d=await db(),code=state.code;if(!code){$('bookRecordStatus').textContent='等待查询；记录保存在本浏览器。';return;}const tx=d.transaction(['events','ticks']),a=request(tx.objectStore('events').index('code').count(code)),b=request(tx.objectStore('ticks').index('code').count(code));const [events,ticks]=await Promise.all([a,b]);$('bookRecordStatus').textContent=`${code}｜已保存 ${events} 次接口响应，${ticks} 条去重成交原始行｜${enabled?'随页面成功读取记录':'记录已暂停'}${lastError?'｜保存失败：'+lastError:'｜本浏览器持久保存（非云端）'}`;const history=await new Promise((ok,no)=>{let visited=0;const found=[],r=d.transaction('events').objectStore('events').index('code').openCursor(IDBKeyRange.only(code),'prev');r.onerror=()=>no(r.error);r.onsuccess=()=>{const cursor=r.result;if(!cursor||found.length>=30||visited++>=120){ok(found.slice(0,30));return;}const e=cursor.value;if(e.kind==='depth')found.push(...e.changes.map(c=>({...c,received_at:e.received_at,gap:e.gap_warning})));cursor.continue();};});const body=$('bookRecordRows');body.replaceChildren();for(const c of history){const tr=document.createElement('tr');for(const v of [tickSourceTime(c.received_at),`${c.side==='bid'?'买':'卖'} / ${c.price}`,c.before_shares===null?'—':c.before_shares/100,c.after_shares===null?'—':c.after_shares/100,c.delta_shares===null?'—':c.delta_shares/100,c.note+(c.gap?'；采样有缺口':'')]){const td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);}body.appendChild(tr);}}catch(e){$('bookRecordStatus').textContent='无法保存记录：'+e.message+'。请启用浏览器存储后刷新；未宣称已保存。';}}
-  function capture(kind,payload,query=null){if(!enabled)return;const copy=JSON.parse(JSON.stringify(payload)),at=new Date().toISOString();queue=queue.then(()=>save(kind,copy,query,at)).then(()=>{lastError='';return refresh();}).catch(e=>{lastError=e.message;return refresh();});}
-  async function exportData(csv=false){try{await queue;const d=await db(),code=state.code;if(!code)throw Error('请先查询股票');const tx=d.transaction(['events','ticks']),[events,ticks]=await Promise.all([request(tx.objectStore('events').index('code').getAll(code)),request(tx.objectStore('ticks').index('code').getAll(code))]);const stamp=new Date().toISOString().replace(/[:.]/g,'-');if(csv){const rows=[['股票','读取时间UTC','读取时间北京','前次读取UTC','间隔毫秒','采样缺口','方向','价格','前量股','后量股','净变化股','说明']];for(const e of events.filter(e=>e.kind==='depth')){for(const c of e.changes)rows.push([code,e.received_at,tickSourceTime(e.received_at),e.previous_received_at,e.interval_ms,e.gap_warning,c.side,c.price,c.before_shares,c.after_shares,c.delta_shares,c.note]);}download(`${code}_五档净变化_${stamp}.csv`,'\uFEFF'+rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n'),'text/csv;charset=utf-8');}else download(`${code}_盘口成交原始记录_${stamp}.json`,JSON.stringify({schema_version:1,code,exported_at:new Date().toISOString(),units:'原始数量为股，价格为元；ISO时间含时区',limitations:'五档无交易所时间；普通逐笔可聚合；净减少不等于撤单；可见范围外不设为零；同指纹成交保留单次响应最大重复数，无法识别源无唯一ID的真实重复或修订。',events,ticks},null,2),'application/json;charset=utf-8');}catch(e){$('bookRecordStatus').textContent='导出失败：'+e.message;}}
-  $('bookRecordEnabled').addEventListener('change',()=>{enabled=$('bookRecordEnabled').checked;void refresh();});$('bookRecordJSON').addEventListener('click',()=>void exportData());$('bookRecordCSV').addEventListener('click',()=>void exportData(true));
-  $('queryForm').addEventListener('submit',()=>{recent=[];queue=queue.then(()=>refresh());});
-  return {capture,refresh,compare};
+  const empty=()=>({reduction_shares:0,trade_credit_shares:0,unexplained_shares:0,unknown_shares:0,rate_pct:null});
+  function coverage(resp,t0,t1,day) { const m=resp.payload_metadata||{},b=m.bounds||{},rt=ms(resp.received_at); if(!Number.isFinite(rt)||rt<t1+10000)return false; if(b.mode==='available-day')return b.day===day; if(b.mode==='minute'){const lo=parseLocal(b.start),hi=parseLocal(b.end);return Number.isFinite(lo)&&Number.isFinite(hi)&&lo<=t0-3000&&hi>=t1+3000;} return false; }
+  function calculate(inputEvents,inputTicks,session) {
+    const events=Array.isArray(inputEvents)?inputEvents:[], ticks=Array.isArray(inputTicks)?inputTicks:[], s=session||{}, sid=s.id, code=s.code, day=s.day;
+    const es=events.filter(e=>e&&e.session_id===sid&&(e.kind==='depth'||e.kind==='tick_response')).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>Number.isFinite(e.__t)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
+    const responses=es.filter(e=>e.kind==='tick_response');
+    const ts=ticks.filter(t=>!code||t.code===code).map((t,i)=>({...t,__i:i,__t:ms(t.first_received_at),__used:0})).filter(t=>Number.isFinite(t.__t)&&t.row&&Number.isFinite(num(t.row.price))).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
+    const byPrice=new Map(); for(const t of ts){t.__tradeAt=ms(t.row.time);const p=num(t.row.price);if(!byPrice.has(p))byPrice.set(p,[]);byPrice.get(p).push(t);}for(const list of byPrice.values())list.sort((a,b)=>a.__tradeAt-b.__tradeAt);
+    function tickWindow(price,lo,hi){const list=byPrice.get(price)||[];let a=0,b=list.length;while(a<b){const m=(a+b)>>>1;if(list[m].__tradeAt<lo)a=m+1;else b=m;}const result=[];for(;a<list.length&&list[a].__tradeAt<=hi;a++)result.push(list[a]);return result;}
+    const snapshots=[], candidates=[], excluded=[], boundaryLog=[]; let prev=null,lastDepth=null;
+    for(const e of es.filter(x=>x.kind==='depth')) { lastDepth=e.__t; const snap=rowsOf(e); snapshots.push({at:iso(e.__t),segment_id:e.segment_id,valid:snap.valid,rows:Array.isArray(e.payload?.rows)?e.payload.rows:[]}); const ph=phaseOf(e.__t), inHours=ph&&dayOf(e.__t)===(day||dayOf(e.__t));
+      if(!snap.valid){excluded.push({start:iso(e.__t),end:iso(e.__t),reason:'incomplete_snapshot',__at:e.__t});prev=null;continue;}
+      if(!prev){prev={e,snap,phase:ph};continue;}
+      const lim=Math.max(5000,num(e.gap_limit_ms||5000)), gap=e.__t-prev.e.__t, contiguous=e.segment_id===prev.e.segment_id&&prev.phase===ph&&gap>0&&gap<=lim&&!e.gap_warning&&inHours&&!!prev.phase;
+      if(!contiguous){excluded.push({start:iso(prev.e.__t),end:iso(e.__t),reason:e.gap_warning?'gap_warning':e.segment_id!==prev.e.segment_id?'segment_boundary':prev.phase!==ph?'phase_boundary':!inHours?'outside_session':'gap',__at:e.__t});prev={e,snap,phase:ph};continue;}
+      const bySide={bid:[],ask:[]}; for(const side of ['bid','ask']) {const old=new Map(prev.snap.a[side].map(x=>[x.price,x.shares])), cur=new Map(snap.a[side].map(x=>[x.price,x.shares])); for(const [p,v] of old){if(!cur.has(p)){boundaryLog.push({at:e.__t,side,shares:v});continue;}if(cur.get(p)<v)bySide[side].push({side,price:p,reduction:v-cur.get(p),t0:prev.e.__t,t1:e.__t});}for(const [p,v] of cur)if(!old.has(p))boundaryLog.push({at:e.__t,side,shares:v});}
+      candidates.push({start:prev.e.__t,end:e.__t,bySide,done:false});prev={e,snap,phase:ph};
+    }
+    const timeline=[]; let cumulative={bid:empty(),ask:empty()}, through=0,confirmedCount=0;
+    const reductionsByPrice=new Map();for(const c of candidates)for(const x of [...c.bySide.bid,...c.bySide.ask]){if(!reductionsByPrice.has(x.price))reductionsByPrice.set(x.price,[]);reductionsByPrice.get(x.price).push(x);}
+    const add=(o,x,credit,unknown)=>{o.reduction_shares+=Math.max(0,x-unknown); o.trade_credit_shares+=credit; o.unknown_shares+=unknown; o.unexplained_shares+=Math.max(0,x-credit-unknown);};
+    let readyIndex=0,waiting=[];for(const r of responses){while(readyIndex<candidates.length&&r.__t>=candidates[readyIndex].end+10000)waiting.push(candidates[readyIndex++]);const eligible=[],remaining=[];for(const c of waiting){if(coverage(r,c.start,c.end,day||dayOf(c.end)))eligible.push(c);else remaining.push(c);}waiting=remaining;if(!eligible.length)continue; const items=[]; for(const c of eligible)for(const side of ['bid','ask'])for(const x of c.bySide[side])items.push({...x,c});
+      const matches=new Map(); for(const x of items){const arr=[];for(const t of tickWindow(x.price,x.t0-3000,x.t1+3000)){if(t.__t>r.__t)continue;const tt=ms(t.row.time??t.__t), vol=t.row.volume;if(typeof vol==='boolean'||vol===null||vol===''||!Number.isFinite(num(vol))||num(vol)<0||!Number.isInteger(num(vol)))continue;if(tt>=x.t0-3000&&tt<=x.t1+3000&&t.__t<=r.__t)arr.push(t);}matches.set(x,arr);}
+      const conflicted=new Set(),reserved=new Set();
+      for(const x of items)for(const t of matches.get(x)){
+        const tt=ms(t.row.time);
+        if((reductionsByPrice.get(x.price)||[]).some(other=>other.side!==x.side&&other.t1<=r.__t&&tt>=other.t0-3000&&tt<=other.t1+3000)){conflicted.add(x);reserved.add(t);}
+      }
+      for(const t of reserved)t.__used=Math.max(t.__used,num(t.row.volume));
+      const intervalMetrics=new Map(eligible.map(c=>[c,{bid:empty(),ask:empty()}]));
+      const out={bid:empty(),ask:empty()};for(const x of items){let credit=0,unknown=0;if(conflicted.has(x)){unknown=x.reduction;}else{for(const t of matches.get(x)){const avail=Math.max(0,num(t.row.volume)-t.__used),take=Math.min(x.reduction-credit,avail);if(take>0){credit+=take;t.__used+=take;}if(credit>=x.reduction)break;}}add(out[x.side],x.reduction,credit,unknown);add(intervalMetrics.get(x.c)[x.side],x.reduction,credit,unknown);}
+      for(const side of ['bid','ask']){out[side].rate_pct=out[side].reduction_shares?out[side].unexplained_shares/out[side].reduction_shares*100:null;for(const k of ['reduction_shares','trade_credit_shares','unexplained_shares','unknown_shares'])cumulative[side][k]+=out[side][k];cumulative[side].rate_pct=cumulative[side].reduction_shares?cumulative[side].unexplained_shares/cumulative[side].reduction_shares*100:null;}
+      const latest=eligible[eligible.length-1];const latestMetrics=intervalMetrics.get(latest);for(const side of ['bid','ask']){const m=latestMetrics[side];m.rate_pct=m.reduction_shares?m.unexplained_shares/m.reduction_shares*100:null;}confirmedCount+=eligible.length;through=Math.max(through,...eligible.map(c=>c.end)); eligible.forEach(c=>c.done=true); const visible={bid:0,ask:0};for(const b of boundaryLog)if(b.at<=r.__t)visible[b.side]+=b.shares;
+      timeline.push({at:iso(r.__t),through:iso(through),bid:{...cumulative.bid},ask:{...cumulative.ask},instant:{start:iso(latest.start),end:iso(latest.end),bid:latestMetrics.bid,ask:latestMetrics.ask},confirmed_intervals:confirmedCount,confirmed_interval_details:eligible.map(c=>({start:iso(c.start),end:iso(c.end)})),excluded_intervals:excluded.filter(x=>x.__at<=r.__t).length,excluded_interval_details:excluded.filter(x=>x.__at<=r.__t).map(({__at,...x})=>x),boundary_shares:visible});
+    }
+    const pendingDetails=candidates.filter(c=>!c.done).map(c=>({start:iso(c.start),end:iso(c.end),reason:'pending_coverage_or_delay'})); const excludedDetails=excluded.map(({__at,...x})=>x); const candidateDetails=candidates.map(c=>({start:iso(c.start),end:iso(c.end),bid_reduction:c.bySide.bid.reduce((a,x)=>a+x.reduction,0),ask_reduction:c.bySide.ask.reduce((a,x)=>a+x.reduction,0)}));
+    return {timeline,last_depth_at:Number.isFinite(lastDepth)?iso(lastDepth):null,pending_intervals:pendingDetails.length, pending_interval_details:pendingDetails,excluded_intervals:excludedDetails.length,excluded_interval_details:excludedDetails,candidate_intervals:candidateDetails.length,candidate_interval_details:candidateDetails,snapshots:snapshots.length,snapshot_details:snapshots,session_started_at:s.started_at||null};
+  }
+  return {calculate};
+})();
+if(typeof module!=='undefined')module.exports=BookFlowCalculator;if(typeof globalThis!=='undefined')globalThis.BookFlowCalculator=BookFlowCalculator;
+
+// Browser-only recorder and session statistics. Uses the existing page timer only.
+const bookRecorder = (() => {
+  let dbPromise, queue = Promise.resolve(), enabled = true, lastError = '';
+  let activeCode = '', active = false, generation = 0, sampleController = null, sampleBusy = false;
+  let viewTime = null;
+  const last = new Map(), knownTicks = new Map(), sessions = new Map(), segments = new Map(), caches = new Map();
+  const box = document.createElement('section');
+  box.className = 'card'; box.id = 'bookRecorder';
+  box.innerHTML = `<div class="section-head" style="flex-wrap:wrap"><h2>五档与成交记录 / 累计统计</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div>
+    <p class="small">点击查询后从启动时刻累计；同股票同日重新打开会接续原会话，暂停处断开比较。滑动 / 固定趋势图时仍记录当前盘口，选点只显示截至当时已核对的数据。</p>
+    <p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div>
+    <p id="bookStatsDetail" class="small" style="line-height:1.9"></p>
+    <details><summary>疑似撤单率如何计算？</summary><p class="hint">这里只估算“可比较挂单净减少中未被同价成交解释的比例”，不是实际委托撤单率，也不是撤单量÷新增委托量。分别对买方（bid）、卖方（ask）计算：未解释净减少量 ÷ 可归因净减少量 × 100%；未解释量＝净减少量−同价成交可能抵扣量。分母为 0 显示 —。只比较相邻完整五档中同方向、同价格的挂单；移出五档、缺档、跨午休 / 日界、采样缺口和竞价不当作撤单。成交按价格和前后 3 秒窗口匹配，单条成交量最多抵扣一次；同时涉及两侧的匹配不猜方向，列为不确定量并排除比例分母。等待至少 10 秒且有覆盖时段的成交响应后才计入统计；未核对区间不按 100% 撤单处理。分时选点取选中时刻之前已确认的累计快照，明确列出实际已核对到的盘口时间。</p></details>
+    <div class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>方向 / 价格</th><th>前量（手）</th><th>后量（手）</th><th>净变化（手）</th><th>说明</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div>
+    <p class="hint">五档没有交易所时间；读取时间不等于真实委托变化时间。普通逐笔约 3 秒聚合，数据源不承诺完整：同一快照间新增与撤出可相互抵消，聚合量也不一定都成交于显示价格。因此估算不构成真实撤单率、准确上下界或交易建议。关页、断网、浏览器后台节流会产生不可补回的五档缺口。原始量为股，页面显示手。记录在本浏览器，不跨设备共享，请定期导出。</p>`;
+  $('thsdkTicks').after(box);
+  const panel = document.createElement('div'); panel.id = 'bookFlowPanel';
+  panel.style.cssText = 'margin:10px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;background:#f7faff;line-height:1.8';
+  panel.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><strong>疑似撤单率（估算）</strong><span class="small">净减少中的未解释比例，非真实撤单率</span></div><div id="bookFlowAt" class="small">查询后从启动时刻累计。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买方累计：—</strong><div class="small" id="bookFlowBidDetail"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖方累计：—</strong><div class="small" id="bookFlowAskDetail"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
+  $('chartPointInfo').after(panel);
+
+  function db() {
+    if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) { reject(Error('此浏览器不支持 IndexedDB')); return; }
+      const r = indexedDB.open('thsdk-orderbook-recorder-v1', 1);
+      r.onupgradeneeded = () => {
+        for (const [name, key, auto] of [['events', 'id', true], ['ticks', 'id', false], ['latest', 'code', false]]) {
+          const s = r.result.createObjectStore(name, { keyPath: key, autoIncrement: auto });
+          if (name !== 'latest') s.createIndex('code', 'code');
+        }
+      };
+      r.onsuccess = () => { r.result.onversionchange = () => r.result.close(); resolve(r.result); };
+      r.onerror = () => reject(r.error); r.onblocked = () => reject(Error('记录库被其他页面阻塞，请关闭旧页面后刷新'));
+    });
+    return dbPromise;
+  }
+  function request(r) { return new Promise((ok, no) => { r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); }
+  function complete(tx) { return new Promise((ok, no) => { tx.oncomplete = ok; tx.onerror = () => no(tx.error); tx.onabort = () => no(tx.error || Error('保存中断')); }); }
+  const beijingDay = t => new Date(new Date(t).getTime() + 8 * 3600000).toISOString().slice(0, 10);
+  const stamp = () => new Date().toISOString();
+  const fmtLots = n => Number.isFinite(n) ? (n / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—';
+  const fmtRate = n => Number.isFinite(n) ? n.toFixed(2) + '%' : '—';
+  function compare(before, after) {
+    const map = rows => { const m = new Map(); for (const r of rows || []) { const side = ['bid', 'buy'].includes(String(r.side).toLowerCase()) ? 'bid' : ['ask', 'sell'].includes(String(r.side).toLowerCase()) ? 'ask' : null; const p = Number(r.price), v = Number(r.volume); if (side && r.price != null && p > 0 && r.volume != null && Number.isFinite(v) && v >= 0) m.set(`${side}|${p}`, { side, price: p, volume: v }); } return m; };
+    const a = map(before), b = map(after), out = [];
+    for (const k of new Set([...a.keys(), ...b.keys()])) { const x = a.get(k), y = b.get(k); if (x && y && x.volume === y.volume) continue; out.push({ side: (y || x).side, price: (y || x).price, before_shares: x?.volume ?? null, after_shares: y?.volume ?? null, delta_shares: x && y ? y.volume - x.volume : null, note: !x ? '进入可见五档（不等于新增委托）' : !y ? '离开可见五档（不等于撤单）' : '同价位净变化（不等于撤单）' }); }
+    return out;
+  }
+  async function cacheFor(code) {
+    if (caches.has(code)) return caches.get(code);
+    const d = await db(), tx = d.transaction(['events', 'ticks', 'latest']);
+    const [events, ticks, saved] = await Promise.all([request(tx.objectStore('events').index('code').getAll(code)), request(tx.objectStore('ticks').index('code').getAll(code)), request(tx.objectStore('latest').get('stats-session:' + code))]);
+    if (!sessions.has(code) && saved?.session) sessions.set(code, saved.session);
+    const c = { events, ticks: new Map(ticks.map(t => [t.id, t])), dirty: true, computed: 0, result: null };
+    caches.set(code, c); return c;
+  }
+  function recompute(code, force = false) {
+    const c = caches.get(code), session = sessions.get(code); if (!c || !session) return null;
+    if (c.dirty && (force || !c.result || Date.now() - c.computed > 900)) {
+      c.result = BookFlowCalculator.calculate(c.events, [...c.ticks.values()], session);
+      c.dirty = false; c.computed = Date.now();
+    }
+    return c.result;
+  }
+  function renderStats() {
+    const code = state.code, session = sessions.get(code), result = recompute(code), selected = viewTime;
+    const normalized = selected ? normalizeChartTime(selected) : null;
+    const cutoff = normalized ? Date.parse(normalized.replace(' ', 'T') + '+08:00') : Date.now();
+    const noData = message => {
+      $('bookFlowAt').textContent = message;
+      $('bookFlowBid').textContent = '买方累计：—'; $('bookFlowAsk').textContent = '卖方累计：—';
+      for (const id of ['bookFlowBidDetail', 'bookFlowAskDetail', 'bookFlowInstant', 'bookFlowCoverage']) $(id).textContent = '';
+    };
+    if (!session) { noData('查询后从启动时刻累计；不补造启动前的五档。'); return; }
+    const at = selected ? `所选 ${normalized}（北京）` : '最新累计';
+    if (!Number.isFinite(cutoff) || cutoff < Date.parse(session.started_at) || (normalized && normalized.slice(0, 10) !== session.day)) {
+      noData(`${at}：早于本次启动或不在本次交易日，无本次统计。启动于 ${tickSourceTime(session.started_at)}。`); return;
+    }
+    const timeline = result?.timeline || []; let lo = 0, hi = timeline.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (Date.parse(timeline[mid].at) <= cutoff) lo = mid + 1; else hi = mid; }
+    const snapshot = lo ? timeline[lo - 1] : null;
+    const startText = `启动 ${tickSourceTime(session.started_at)}（北京）`;
+    if (!snapshot) {
+      noData(`${at}｜${startText}｜尚无已核对区间：等待至少 10 秒及覆盖时段的成交响应。`);
+      $('bookFlowCoverage').textContent = selected ? '所选时刻之前尚无已确认的统计快照，不使用后来的数据冒充当时结果。' : `当前待核对 ${result?.pending_intervals || 0} 区间；未核对不视为撤单。`;
+      $('bookStatsDetail').textContent = `${startText}；当前会话快照 ${result?.snapshots || 0}，候选区间 ${result?.candidate_intervals || 0}，排除区间 ${result?.excluded_intervals || 0}。`;
+      return;
+    }
+    $('bookFlowAt').textContent = `${at}｜${startText}｜已核对盘口至 ${tickSourceTime(snapshot.through)}；确认于 ${tickSourceTime(snapshot.at)}`;
+    for (const [side, label] of [['bid', '买方'], ['ask', '卖方']]) {
+      const metric = snapshot[side], suffix = side === 'bid' ? 'Bid' : 'Ask';
+      $('bookFlow' + suffix).textContent = `${label}累计：${fmtRate(metric.rate_pct)}`;
+      $('bookFlow' + suffix + 'Detail').textContent = `可归因净减少 ${fmtLots(metric.reduction_shares)} 手；同价成交可能抵扣 ${fmtLots(metric.trade_credit_shares)} 手；未解释 ${fmtLots(metric.unexplained_shares)} 手；方向不确定 ${fmtLots(metric.unknown_shares)} 手`;
+    }
+    const instant = snapshot.instant;
+    $('bookFlowInstant').textContent = instant ? `最近已核对区间 ${tickSourceTime(instant.start)} → ${tickSourceTime(instant.end)}｜买方 ${fmtRate(instant.bid?.rate_pct)}，卖方 ${fmtRate(instant.ask?.rate_pct)}` : '';
+    $('bookFlowCoverage').textContent = `已核对 ${snapshot.confirmed_intervals} 区间，排除 ${snapshot.excluded_intervals} 区间；边界进出未归因量：买 ${fmtLots(snapshot.boundary_shares?.bid)} 手 / 卖 ${fmtLots(snapshot.boundary_shares?.ask)} 手。${selected ? '仅使用选点时刻前已确认的累计快照。' : `另有 ${result.pending_intervals} 区间待核对。`}`;
+    $('bookStatsDetail').textContent = `${startText}；${active && activeCode === code && enabled ? '正在记录' : '已暂停 / 仅查看本地记录'}。会话快照 ${result.snapshots}，已核对 ${snapshot.confirmed_intervals} 区间。比例为净减少中的未解释占比，不是委托笔数撤单率。`;
+  }
+  async function refresh() {
+    try {
+      const code = state.code; if (!code) { $('bookRecordStatus').textContent = '等待查询；记录保存在本浏览器。'; renderStats(); return; }
+      const c = await cacheFor(code); if (state.code !== code) return;
+      $('bookRecordStatus').textContent = `${code}｜已保存 ${c.events.filter(e => e.kind === 'depth' || e.kind === 'tick_response').length} 次接口响应，${c.ticks.size} 条去重成交原始行｜${enabled && active && activeCode === code ? '随页面成功读取记录' : '记录已暂停'}${lastError ? '｜读取 / 保存问题：' + lastError : '｜本浏览器持久保存（非云端）'}`;
+      const history = c.events.filter(e => e.kind === 'depth').slice(-60).reverse().flatMap(e => (e.changes || []).map(change => ({ ...change, received_at: e.received_at, gap: e.gap_warning }))).slice(0, 30);
+      const body = $('bookRecordRows'); body.replaceChildren();
+      for (const r of history) { const tr = document.createElement('tr'); for (const v of [tickSourceTime(r.received_at), `${r.side === 'bid' ? '买' : '卖'} / ${r.price}`, r.before_shares === null ? '—' : r.before_shares / 100, r.after_shares === null ? '—' : r.after_shares / 100, r.delta_shares === null ? '—' : r.delta_shares / 100, r.note + (r.gap ? '；采样有缺口' : '')]) { const td = document.createElement('td'); td.textContent = String(v); tr.appendChild(td); } body.appendChild(tr); }
+      renderStats();
+    } catch (e) { $('bookRecordStatus').textContent = '无法保存 / 计算记录：' + e.message + '。未宣称已保存。'; }
+  }
+  async function save(kind, payload, query, receivedAt, context) {
+    const d = await db(), code = payload.code, c = await cacheFor(code);
+    let prev = last.get(code);
+    if (kind === 'depth' && !prev) { prev = await request(d.transaction('latest').objectStore('latest').get(code)); if (prev) last.set(code, prev); }
+    let known;
+    if (kind !== 'depth') { known = knownTicks.get(code); if (!known) { known = new Set(c.ticks.keys()); knownTicks.set(code, known); } }
+    const tx = d.transaction(['events', 'ticks', 'latest'], 'readwrite'), done = complete(tx), added = [];
+    let event;
+    if (kind === 'depth') {
+      const day = beijingDay(receivedAt), sameDay = prev?.day === day, elapsed = sameDay ? new Date(receivedAt) - new Date(prev.received_at) : null;
+      const limit = Math.max(5000, (Number($('interval').value) || 1) * 3000);
+      event = { kind, code, day, received_at: receivedAt, source_fetched_at: payload.fetched_at || null, previous_received_at: sameDay ? prev.received_at : null, interval_ms: elapsed, gap_limit_ms: limit, gap_warning: elapsed !== null && elapsed > limit, unchanged: sameDay && JSON.stringify(prev.rows) === JSON.stringify(payload.rows), changes: sameDay ? compare(prev.rows, payload.rows) : [], payload, ...context };
+      tx.objectStore('latest').put({ code, day, rows: payload.rows, received_at: receivedAt });
+    } else {
+      const { rows, ...metadata } = payload, occurrences = new Map();
+      for (const row of rows) {
+        const fingerprint = tickRowFingerprint(row), n = (occurrences.get(fingerprint) || 0) + 1; occurrences.set(fingerprint, n);
+        const id = JSON.stringify([code, fingerprint, n]); if (known.has(id)) continue;
+        const value = { id, code, day: tickRowBeijingDay(row) || null, first_received_at: receivedAt, source_fetched_at: payload.fetched_at || null, row };
+        added.push(value); const r = tx.objectStore('ticks').add(value);
+        r.onerror = e => { if (r.error?.name === 'ConstraintError') { e.preventDefault(); e.stopPropagation(); } };
+      }
+      event = { kind: 'tick_response', code, received_at: receivedAt, query, row_count: rows.length, payload_metadata: metadata, ...context };
+    }
+    const r = tx.objectStore('events').add(event); r.onsuccess = () => { event.id = r.result; };
+    await done;
+    if (kind === 'depth') last.set(code, { code, day: beijingDay(receivedAt), rows: payload.rows, received_at: receivedAt });
+    for (const value of added) { known.add(value.id); if (!c.ticks.has(value.id)) c.ticks.set(value.id, value); }
+    c.events.push(event); c.dirty = true;
+  }
+  function capture(kind, payload, query = null) {
+    if (!enabled || !active || payload.code !== activeCode) return;
+    const session = sessions.get(payload.code); if (!session) return;
+    const copy = JSON.parse(JSON.stringify(payload)), at = stamp(), context = { session_id: session.id, segment_id: segments.get(payload.code) };
+    queue = queue.then(() => save(kind, copy, query, at, context)).then(() => { lastError = ''; return refresh(); }).catch(e => { lastError = e.message; return refresh(); });
+  }
+  function pause() {
+    active = false; generation++; sampleController?.abort(); sampleController = null; sampleBusy = false; renderStats();
+  }
+  async function begin(code, startedAt = stamp(), reset = false) {
+    pause(); activeCode = code; viewTime = null;
+    if (!enabled) return;
+    const task = async () => {
+      const d = await db(), saved = await request(d.transaction('latest').objectStore('latest').get('stats-session:' + code));
+      const day = beijingDay(startedAt), old = saved?.session;
+      const session = !reset && old?.day === day ? old : { id: `${code}|${startedAt}`, code, day, started_at: startedAt };
+      const segment = `${stamp()}|${Math.random().toString(36).slice(2, 7)}`;
+      sessions.set(code, session); segments.set(code, segment); caches.delete(code); knownTicks.delete(code);
+      const tx = d.transaction(['latest', 'events'], 'readwrite'), done = complete(tx);
+      tx.objectStore('latest').put({ code: 'stats-session:' + code, session });
+      tx.objectStore('events').add({ kind: old?.id === session.id ? 'stats_resume' : 'stats_start', code, received_at: stamp(), session_id: session.id, segment_id: segment, session });
+      await done; active = activeCode === code; await refresh();
+    };
+    queue = queue.then(task).catch(e => { lastError = e.message; return refresh(); });
+    await queue;
+    if (active && enabled) void poll(true);
+  }
+  async function poll(explicit = false) {
+    const code = activeCode;
+    if (!active || !enabled || sampleBusy || !/^\d{6}$/.test(code) || (!explicit && (document.hidden || !marketPhase().open))) return;
+    if (sessions.get(code)?.day !== dayShanghai()) { void begin(code); return; }
+    const controller = new AbortController(), g = generation; sampleController = controller; sampleBusy = true;
+    const timeout = setTimeout(() => controller.abort(), 18000);
+    try {
+      await Promise.all(['depth', 'ticks'].map(async kind => {
+        const response = await fetch(THSDK_TICK_API.replace('/api/ticks', '/api/' + kind) + '?code=' + code, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok || data.source !== 'THSDK' || data.code !== code || !Array.isArray(data.rows)) throw Error('当前盘口 / 成交读取失败');
+        if (g !== generation || !active || code !== activeCode) return;
+        capture(kind, data, kind === 'ticks' ? { code } : null);
+      }));
+    } catch (e) { if (g === generation) { lastError = e.name === 'AbortError' ? '采样超时，区间可能有缺口' : e.message; void refresh(); } }
+    finally { clearTimeout(timeout); if (sampleController === controller) { sampleController = null; sampleBusy = false; } }
+  }
+  function heartbeat() {
+    if (!active || !enabled) return;
+    if (sessions.get(activeCode)?.day !== dayShanghai()) { void begin(activeCode); return; }
+    renderStats();
+    if (hoveredPointTime || (state.chartDate && state.chartDate !== dayShanghai())) void poll();
+  }
+  function viewAt(time = null) { viewTime = time; renderStats(); }
+  function csvText(rows) { return '\uFEFF' + rows.map(row => row.map(v => '"' + String(v ?? '').replaceAll('"', '""') + '"').join(',')).join('\r\n'); }
+  async function exportData(mode = 'json') {
+    try {
+      await queue; const code = state.code; if (!code) throw Error('请先查询股票');
+      const c = await cacheFor(code), result = recompute(code, true), time = stamp().replace(/[:.]/g, '-');
+      if (mode === 'changes') {
+        const rows = [['股票', '读取时间UTC', '读取时间北京', '前次读取UTC', '间隔毫秒', '采样缺口', '方向', '价格', '前量股', '后量股', '净变化股', '说明']];
+        for (const e of c.events.filter(e => e.kind === 'depth')) for (const r of e.changes || []) rows.push([code, e.received_at, tickSourceTime(e.received_at), e.previous_received_at, e.interval_ms, e.gap_warning, r.side, r.price, r.before_shares, r.after_shares, r.delta_shares, r.note]);
+        download(`${code}_五档净变化_${time}.csv`, csvText(rows), 'text/csv;charset=utf-8');
+      } else if (mode === 'stats') {
+        const rows = [['股票', '会话启动UTC', '确认时间UTC', '已核对盘口时间UTC', '方向', '可归因净减少股', '成交可能抵扣股', '未解释股', '方向不确定股', '疑似撤单率估算百分比', '确认区间', '排除区间']];
+        for (const s of result?.timeline || []) for (const side of ['bid', 'ask']) { const m = s[side]; rows.push([code, sessions.get(code)?.started_at, s.at, s.through, side, m.reduction_shares, m.trade_credit_shares, m.unexplained_shares, m.unknown_shares, m.rate_pct, s.confirmed_intervals, s.excluded_intervals]); }
+        download(`${code}_疑似撤单率估算_${time}.csv`, csvText(rows), 'text/csv;charset=utf-8');
+      } else {
+        download(`${code}_盘口成交原始记录_${time}.json`, JSON.stringify({ schema_version: 2, code, exported_at: stamp(), units: '原始数量为股，价格为元；ISO时间含时区', limitations: '疑似撤单率只是可比较净减少中未被同价成交解释的比例，不是真实委托撤单率或准确上下界；同指纹成交保留单次响应最大重复数，不能区分没有唯一ID的源修订。', calculation: { version: 1, metric: '可归因净减少中的未解释比例，不是真实撤单率', formula: 'unexplained_shares / reduction_shares * 100', match_window_ms: 3000, minimum_settlement_delay_ms: 10000, trade_direction: '不解释未经验证的deal_type；按同价可能抵扣，跨侧歧义排除', time_basis: '浏览器收到时间；历史选点只取确认时间不晚于选点的累计快照' }, session: sessions.get(code), statistics: result, events: c.events, ticks: [...c.ticks.values()] }, null, 2), 'application/json;charset=utf-8');
+      }
+    } catch (e) { $('bookRecordStatus').textContent = '导出失败：' + e.message; }
+  }
+  $('bookRecordEnabled').addEventListener('change', () => { enabled = $('bookRecordEnabled').checked; if (!enabled) { pause(); void refresh(); } else if (state.code) void begin(state.code); });
+  $('bookRecordRestart').addEventListener('click', () => { if (state.code) void begin(state.code, stamp(), true); });
+  $('bookRecordJSON').addEventListener('click', () => void exportData());
+  $('bookRecordCSV').addEventListener('click', () => void exportData('changes'));
+  $('bookStatsCSV').addEventListener('click', () => void exportData('stats'));
+  return { capture, refresh, compare, begin, pause, heartbeat, viewAt, exportData };
 })();
 
 depthRender();$('depthReadOnce').disabled=true;$('depthReadOnce').addEventListener('click',()=>depthSync(true,true));
