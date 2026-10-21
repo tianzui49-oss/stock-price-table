@@ -79,7 +79,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
       <p class="hint">新闻关键词分类不是事实结论。涉及监管、诉讼、业绩等事项，请以公司正式公告和监管披露为准。</p>
     </section>
   </section>
-<!-- CLS telegraph: isolated addition; existing page modules are unchanged. -->
+<!-- CLS telegraph: isolated automatic analysis addition; existing page modules are unchanged. -->
 <style>
 #clsTelegraph .cls-tools{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px}
 #clsTelegraph .cls-date{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
@@ -98,91 +98,263 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 #clsTelegraph button:disabled{opacity:.55;cursor:not-allowed}
 #clsTelegraph .cls-bottom{margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 @media(max-width:520px){#clsTelegraph .cls-tools{gap:8px}#clsTelegraph button{padding:0 11px}#clsTelegraph .cls-feed{max-height:560px}}
+#clsTelegraph .cls-pinned{border-left:3px solid #d99432;padding-left:10px;background:#fffcf5}
+#clsTelegraph .cls-badges{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0}
+#clsTelegraph .cls-reason{font-size:12px;color:#825821;line-height:1.7;margin:7px 0}
+#clsTelegraph details{font-size:12px;line-height:1.8;color:#526174;margin-top:7px}
+#clsTelegraph summary{cursor:pointer;color:#1768b2}
+#clsTelegraph details ul{margin:5px 0;padding-left:20px}
+#clsTelegraph .cls-group{font-size:14px;margin:0;padding:10px;background:#eef3f9}
+#clsTelegraph select{height:42px;border:1px solid #cfd8e5;border-radius:8px;padding:0 7px;background:white;color:var(--ink);max-width:100%}
+#clsCoverage{padding:9px;background:#f2f6fc;border-radius:6px;line-height:1.8}
 </style>
+
 <section class="card" id="clsTelegraph" aria-labelledby="clsTitle">
-  <div class="section-head" style="flex-wrap:wrap"><h2 id="clsTitle">财联社 · 新闻电报</h2><a class="small" href="https://www.cls.cn/telegraph" target="_blank" rel="noopener noreferrer">财联社官方原文</a></div>
+  <div class="section-head" style="flex-wrap:wrap"><h2 id="clsTitle">财联社 · 自动分析与重点电报</h2><a class="small" href="https://www.cls.cn/telegraph" target="_blank" rel="noopener noreferrer">财联社官方原文</a></div>
   <div class="cls-tools">
     <label class="cls-date" for="clsDate">查看日期（北京时间）<input id="clsDate" type="date" aria-describedby="clsHelp"></label>
     <button class="secondary" id="clsRecent" type="button">最近三天</button>
     <button class="secondary" id="clsRefresh" type="button">刷新电报</button>
     <label class="cls-auto"><input id="clsAuto" type="checkbox" checked> 每 30 秒更新</label>
+    <label class="cls-date" for="clsSort">排序<select id="clsSort"><option value="pinned">置顶优先 · 组内最新在前</option><option value="latest">全部按最新时间</option></select></label>
   </div>
-  <p class="hint" id="clsHelp">独立展示全市场电报，不跟随上方股票筛选。默认最近三天（今天及前两天）；可选择其他日期，历史数据以官方接口可返回范围为准。每批加载 20 条，点击下方按钮继续查看。</p>
-  <p class="cls-status" id="clsStatus" role="status" aria-live="polite">正在读取财联社官方电报…</p>
-  <div class="cls-feed" id="clsFeed" aria-label="财联社电报列表"></div>
-  <div class="cls-bottom"><button class="secondary" id="clsMore" type="button" disabled>加载更早电报</button><span class="small" id="clsCount"></span></div>
-  <p class="hint">来源：财联社官方电报接口，经独立只读接口转发。时间均为北京时间，按发布时间倒序；更新可能受源站和网络影响，不保证零延迟。历史日期不自动轮询，切回最近三天或今天后恢复。</p>
+  <p class="hint" id="clsHelp">默认今天：先分析最新一批，再从新到旧自动补齐当天源站可返回的电报，无需输入股票。高影响大盘 / 行业消息独立判断置顶；选股后，直接关联该股票或其行业、板块、标签的消息也置顶。所有电报均分析，不仅分析置顶条目。</p>
+  <p class="hint" id="clsContext"></p>
+  <p class="cls-status" id="clsStatus" role="status" aria-live="polite">正在读取财联社官方最新电报…</p>
+  <p class="small" id="clsCoverage" role="status" aria-live="polite"></p>
+  <div class="cls-feed" id="clsFeed" aria-label="财联社电报与自动分析列表"></div>
+  <div class="cls-bottom"><button class="secondary" id="clsMore" type="button" disabled>正在自动补齐…</button><span class="small" id="clsCount"></span></div>
+  <details><summary>自动评分和置顶如何判断？</summary><p class="hint">使用本地可解释规则（不是大模型深度研判），关注分为 0–100 分，不是涨跌概率或收益预测。按实质政策、跨市场风险、行业供需与技术事件加权，源站重点标记仅作少量加权；传闻、拟议和缺正文降低评分。大盘 / 行业事件达到关注门槛时置顶；与当前股票直接或行业标签关联时独立置顶，关联不表示利好。每条可展开查看本次命中与加减分。词义、否定和多主体关系仍可能误判，请核对原文。</p></details>
+  <p class="hint">仅分析财联社公开接口实际返回的标题与电报正文，未额外抓取付费全文；无正文、加载不完整或接口失效会明确提示。范围“已加载完”仅表示已遍历源站可返回数据，不保证源站不存在遗漏。网页保持打开且网络及转发服务正常时每 30 秒检查最新消息，收到后立即规则分析；浏览器后台节流或关闭页面时不保证持续运行，不保证零延迟。历史日期不轮询，可手动刷新；默认今天会自动跨日。</p>
 </section>
+<script>
+/* CLS news rule analyzer: deterministic rules only, not an LLM or price forecast. */
+const CLSAnalyzer = (() => {
+  const version = '1.1.0';
+  const GENERIC = new Set(['政策','消息','公告','融资融券','沪深股通','沪股通','深股通','港股通','北向资金','南向资金','大盘','市场','指数','股票','证券','行业','公司','个股','A股','板块','资金','权重股','大盘股','大盘价值','百日新高','近期新高','低市净率','长期破净','破净股','标准普尔','富时罗素','MSCI中国','机构重仓','保险重仓','HS300_','上证180_']);
+  const ALIASES = {
+    银行: ['银行','商业银行','国有大行','城商行','农商行','银行业'],
+    半导体: ['半导体','芯片','集成电路','晶圆','封装测试','光刻机','存储芯片'],
+    证券: ['证券','券商','投行','经纪业务','证券业'],
+    光伏: ['光伏','太阳能组件','硅料','硅片','电池片','逆变器'],
+    新能源: ['新能源','锂电','动力电池','储能','新能源汽车','电动车'],
+    房地产: ['房地产','地产','楼市','保障房','房企','住房'],
+    医药: ['医药','创新药','医疗器械','医院','生物医药'],
+    有色金属: ['有色金属','铜','铝','锂','稀土','黄金'],
+    军工: ['军工','国防','航空航天','装备制造'],
+    AI: ['人工智能','AI','大模型','算力','智能驾驶'],
+    消费: ['消费','零售','家电','食品饮料','白酒']
+  };
+  // MAJOR is deliberately composed of actor/object + substantive action, not authority names alone.
+  const MAJOR = [
+    ['货币/财政/监管', /(?:央行|人民银行|国务院|财政部|证监会|金融监管总局|监管部门).{0,24}(?:降准|降息|降贷款利率|降存款准备金|存款准备金|公开市场操作|特别国债|超长期国债|重大财税|资本市场改革|系统性风险处置|救市|监管新规|正式实施|发布(?:新政|方案|办法|规定))|主要政策利率|利率调控机制改革/s, 31],
+    ['跨市场风险', /(?:全球股市|美股|欧股|港股|原油|国际油价|汇率|人民币|债市).{0,12}(?:暴跌|大跌|暴涨|大幅(?:上涨|下跌|波动)|剧烈波动)|(?:供应中断|大规模减产|停产|禁运|地缘冲突升级).{0,18}(?:原油|能源|全球市场|大宗商品)/, 27],
+    ['行业供需/技术', /(?:工信部|国务院|发改委|监管部门).{0,24}(?:发布|出台|实施|推出).{0,20}(?:半导体|芯片|光伏|新能源|医药|房地产|行业|产业).{0,20}(?:新政|扶持|规范|政策|方案)|(?:半导体|芯片|光伏|新能源|医药|房地产|[\u4e00-\u9fa5]{2,8}行业|[\u4e00-\u9fa5]{2,8}产业).{0,12}(?:全行业)?(?:停产|限产|大规模减产|供给侧改革|产能置换|供需失衡|供应中断|出口管制|禁运|重大技术突破|量产落地|价格暴涨|价格暴跌|大幅涨价|大幅降价)/, 24]
+  ];
+  const NEG = /辟谣|澄清|否认|不实|假消息|传闻|传言|网传|据传|(?:拟|计划|将于|拟于)(?:实施|落地|启动|执行|推出|发布新政|停产|限产|减产|回购|涨价)|(?:或将|可能)(?:实施|落地|启动|停产|限产|涨价|降价)|尚未(?:实施|落地|获批|证实)|未获证实|不代表|(?:没有|未|不存在|未出现)(?:涨价|回购|退市风险|风险)/;
+  const POS = /获批|落地|正式实施|签署|公布|发布|突破|量产|涨价|降准|降息|增持|回购|中标|订单|重组|并购|减产|限产/;
+  const BAD = /暴跌|大跌|下滑|下降|亏损|违约|减持|处罚|立案|退市|爆雷|风险|事故|封锁|禁令|制裁/;
+  const GOOD = /上涨|大涨|利好|增长|盈利|增持|回购|获批|中标|突破|涨价/;
+  function textOf(row) { return String((row && row.title) || '') + ' ' + String((row && row.content) || ''); }
+  function clean(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
+  function esc(s) { return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function hasCode(text, code) { const c = clean(code); if (!c || !/^\d{4,8}$/.test(c)) return false; return new RegExp('(?<!\\d)' + esc(c) + '(?!\\d)').test(text); }
+  function aliasesFor(value, industryContext = false) {
+    const s = clean(value); if (!s) return [];
+    // Generic tags never create a false industry hit. “证券” is meaningful only as an industry selector,
+    // and then maps to specific brokerage terms rather than matching every occurrence of 证券.
+    if (GENERIC.has(s) && !(industryContext && s === '证券')) return [];
+    const out = new Set();
+    Object.keys(ALIASES).forEach(k => { if (k === s || ALIASES[k].includes(s)) ALIASES[k].forEach(x => out.add(x)); });
+    if (s === '证券' && industryContext) out.delete('证券');
+    if (!out.size && s.length >= 2) out.add(s);
+    return [...out].filter(x => x.length >= 2 && !GENERIC.has(x));
+  }
+  function analyze(row, context = {name:'', code:'', industry:[], tags:[]}) {
+    row = row || {}; const title = clean(row.title), content = clean(row.content), text = clean(title + ' ' + content);
+    const evidence = [], logic = [], pinReasons = [], matched = [], components = [];
+    if (!title && !content) return {score:0,pin:false,pinReasons:[],scope:'信息不足',direction:'中性',logic:['标题和正文均为空，无法研判'],evidence:[],caveat:'空内容：未进行实质判断。',matched:[],components:[{name:'基础',points:0}],version};
+    let score = 8; components.push({name:'基础',points:8});
+    const insufficient = !content || text.length < 18;
+    if (insufficient) { score -= 8; components.push({name:'正文缺失/过短',points:-8}); evidence.push('正文缺失或摘要过短'); logic.push('仅按可见摘要分析，证据不足，实际影响无法确认'); }
+    let major = false;
+    for (const [name,re,points] of MAJOR) if (re.test(text)) {
+      major = true; score += points; components.push({name,points});
+      evidence.push(name + '特征：' + (text.match(re)||[''])[0]);
+      if (name === '货币/财政/监管') logic.push('政策主体实施实质动作 → 改变流动性、资金成本或监管约束 → 影响市场估值与风险偏好');
+      else if (name === '跨市场风险') logic.push('大幅价格波动或供应事件 → 改变商品/汇率与成本预期 → 传导至通胀、利润和风险偏好');
+      else logic.push('行业供需、技术或政策动作 → 改变供给/需求与竞争格局 → 传导至产品价格、利润和产业链预期');
+    }
+    if (row.important === true || row.important === 1 || row.important === '1') { score += 5; components.push({name:'源站标记加权',points:5}); logic.push('保留财联社源站重要标记的少量加权，不单独认定重大'); }
+    const neg = NEG.test(text); const positive = POS.test(text);
+    // A negated risk statement is not itself a bearish event.
+    const riskNegated = /(?:没有|未|不存在|未出现)(?:明显)?(?:风险|退市风险)/.test(text);
+    const directionUncertain = neg || /不(?:等于|宜(?:炒作成)?|代表).{0,8}(?:降息|利好|涨价|回购)|利率调控机制改革|主要政策利率/.test(text);
+    const directionalText=text.replace(/(?:公开市场|隔夜|逆|正)?回购(?:利率|操作|期限|市场)/g,'货币操作');
+    const bad = BAD.test(directionalText) && !riskNegated; const good = GOOD.test(directionalText) && !directionUncertain;
+    if (neg) { score -= 22; components.push({name:'否定/传闻/拟议降权',points:-22}); logic.push('否定、传闻或拟议动作仅表示不确定性，不视为已落地事件'); evidence.push('风险措辞：' + (text.match(NEG)||[''])[0]); }
+    if (bad && !neg) { score += 5; components.push({name:'风险方向',points:5}); }
+    if (good && !bad && !neg) { score += 3; components.push({name:'事件确认',points:3}); }
+    const name = clean(context.name), code = clean(context.code);
+    if (name && name.length >= 2 && text.includes(name)) { matched.push('公司：' + name); evidence.push('直接出现股票名称'); }
+    if (hasCode(text, code)) { matched.push('代码：' + code); evidence.push('以数字边界匹配股票代码'); }
+    for (const v of [].concat(context.industry || [])) for (const a of aliasesFor(v, true)) if (text.includes(a) && !matched.includes('行业：'+a)) matched.push('行业：' + a);
+    for (const v of [].concat(context.tags || [])) for (const a of aliasesFor(v, false)) if (text.includes(a) && !matched.includes('行业：'+a)) matched.push('行业：' + a);
+    const direct = matched.some(x => x.startsWith('公司：') || x.startsWith('代码：')); const related = matched.some(x => x.startsWith('行业：'));
+    if (direct) { score += 18; components.push({name:'直接关联',points:18}); pinReasons.push('出现所选股票名称或边界代码'); logic.push('新闻直接关联所选股票；可解释传导为事件影响公司收入、成本或估值，但方向仍需结合基本面'); }
+    else if (related) { score += 10; components.push({name:'行业/标签关联',points:10}); pinReasons.push('命中所选行业或标签别名'); logic.push('新闻命中行业对象 → 通过供需、成本或政策约束影响行业利润预期；不据此猜测具体公司'); }
+    if (neg && /(?:否认|没有|未)(?:涨价|回购)/.test(text)) logic.push('否认涨价/回购不按利好处理');
+    if (!major && !direct && !related) logic.push('未匹配到重大事件或所选标的；未匹配不等于无价值，仅表示规则未识别出明确传导链');
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    let direction = '中性'; if (!directionUncertain && bad && !good) direction = '偏空'; else if (!directionUncertain && good && !bad) direction = '偏多'; else if (!directionUncertain && bad && good) direction = '分化';
+    // Base 8 + a confirmed trigger (24) is enough to pin; short-body deduction remains visible.
+    const pin = Boolean((major && score >= 24) || direct || related);
+    if (pin && major) pinReasons.unshift('高影响大盘/行业事件');
+    let scope = major ? '大盘/行业' : (direct ? '个股' : (related ? '行业关联' : '一般资讯'));
+    if (insufficient) scope = scope === '一般资讯' ? '信息不足' : scope + '（信息不足）';
+    const caveat = '规则研判不是大模型；不构成投资建议，也不提供确定股价预测。' + (insufficient ? '正文为空或过短，结论置信度较低。' : '');
+    return {score,pin,pinReasons: pin ? pinReasons : [],scope,direction,logic,evidence,caveat,matched,components,version};
+  }
+  return {analyze, version};
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = CLSAnalyzer;
+
+</script>
 <script>
 (() => {
   'use strict';
   const API='https://8767-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/cls-telegraph';
   const el=id=>document.getElementById(id);
-  const ui={date:el('clsDate'),recent:el('clsRecent'),refresh:el('clsRefresh'),auto:el('clsAuto'),status:el('clsStatus'),feed:el('clsFeed'),more:el('clsMore'),count:el('clsCount')};
-  const data={date:'',rows:new Map(),cursor:null,generation:0,busy:false,controller:null,today:'',loaded:false};
-  const chinaDate=(millis=Date.now())=>new Date(millis+8*3600000).toISOString().slice(0,10);
-  function bounds(){const today=chinaDate();const start=Date.parse((data.date||chinaDate(Date.now()-2*86400000))+'T00:00:00+08:00')/1000;return {start,end:data.date?start+86400:Date.now()/1000+1,today};}
-  function plain(value){const doc=new DOMParser().parseFromString(String(value).replace(/<br\s*\/?\s*>/gi,'\n'), 'text/html');return (doc.body.textContent||'').trim();}
+  const ui={date:el('clsDate'),recent:el('clsRecent'),refresh:el('clsRefresh'),auto:el('clsAuto'),status:el('clsStatus'),feed:el('clsFeed'),more:el('clsMore'),count:el('clsCount'),coverage:el('clsCoverage'),context:el('clsContext'),sort:el('clsSort')};
+  const chinaDate=(ms=Date.now())=>new Date(ms+8*3600000).toISOString().slice(0,10);
+  const data={date:chinaDate(),followToday:true,rows:new Map(),cache:new Map(),cursor:null,gaps:[],generation:0,headBusy:false,backBusy:false,controllers:new Set(),today:chinaDate(),loaded:false,complete:false,historyError:'',headError:'',stamp:'',newCount:0,backTimer:null};
+  function bounds(){const start=Date.parse((data.date||chinaDate(Date.now()-2*86400000))+'T00:00:00+08:00')/1000;return {start,end:data.date?start+86400:Date.now()/1000+1};}
+  function plain(value){const doc=new DOMParser().parseFromString(String(value||'').replace(/<br\s*\/?\s*>/gi,'\n'),'text/html');return (doc.body.textContent||'').trim();}
   function label(){return data.date||'最近三天';}
-  function buttons(){ui.more.disabled=data.busy||data.cursor===null;ui.refresh.disabled=data.busy;ui.more.textContent=data.busy?'正在加载…':data.cursor===null?'已到所选范围末尾':'加载更早电报';}
+  function context(){
+    // Read the existing page's selected stock only; never guess missing industries.
+    const text=el('stockTitle')?.textContent||'',m=text.match(/^(.+?)（(\d{6})）/);
+    let selected=null;
+    try{if(typeof state!=='undefined')selected=state;}catch(error){/* Main script has not initialized yet. */}
+    if(el('result')?.hidden||selected&&!selected.code||!selected&&!m)return {name:'',code:'',industry:[],tags:[]};
+    const industry=(el('stockIndustry')?.textContent||'').replace(/^所属行业：/,'').split(/\s*\/\s*/).filter(x=>x&&!/加载|暂无|待查询|未获取/.test(x));
+    const tags=[...(el('stockTags')?.querySelectorAll('.tag')||[])].map(x=>x.textContent.trim());
+    return {name:selected?selected.name:m[1],code:selected?selected.code:m[2],industry,tags};
+  }
+  function buttons(){ui.refresh.disabled=data.headBusy;ui.more.disabled=!data.loaded||data.backBusy||data.complete&&!data.gaps.length;ui.more.textContent=data.backBusy?'正在自动补齐…':data.historyError?'重试自动补齐':data.complete&&!data.gaps.length?'所选范围已加载完':'继续补齐电报';}
+  function status(){
+    ui.status.classList.toggle('error',!!data.headError);
+    const live=!data.date||data.date===chinaDate();
+    ui.status.textContent=data.headError||((data.stamp?'官方最新数据读取于 '+data.stamp+'（北京时间）':'正在读取官方最新电报…')+(live?(ui.auto.checked?' · 页面打开时每 30 秒更新':' · 自动更新已关闭'):' · 历史日期，不轮询'));
+    const n=data.rows.size;
+    ui.coverage.textContent=label()+'：已取得 '+n+' 条 / 已分析 '+n+' 条；'+(data.historyError?'补齐暂时失败，将重试；当前并非完整范围。':data.complete&&!data.gaps.length?'已遍历源站返回的所选日期范围。':data.loaded?'最新一批已分析，正在从新到旧自动补齐，当前尚未完整。':'等待首批数据。')+(data.gaps.length?' 正在补齐两次刷新之间的新增电报。':'');
+    buttons();
+  }
+  function analysis(row,ctx,key){
+    const fingerprint=JSON.stringify([row.title,row.content,row.important,key,CLSAnalyzer.version]);
+    const cached=data.cache.get(row.id);if(cached?.fingerprint===fingerprint)return cached.value;
+    const value=CLSAnalyzer.analyze(row,ctx);data.cache.set(row.id,{fingerprint,value});return value;
+  }
+  function textNode(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;}
   function render(){
-    const range=bounds(),oldTop=ui.feed.scrollTop;
-    for(const [id,row] of data.rows)if(row.timestamp<range.start||row.timestamp>=range.end)data.rows.delete(id);
-    const fragment=document.createDocumentFragment();
-    const rows=[...data.rows.values()].sort((a,b)=>b.timestamp-a.timestamp||b.id-a.id);
-    for(const row of rows){
-      const item=document.createElement('article');item.className='cls-item'+(row.important?' cls-important':'');item.dataset.id=String(row.id);
-      const time=document.createElement('time');time.dateTime=row.time;time.textContent=new Date((row.timestamp+8*3600)*1000).toISOString().slice(0,19).replace('T',' ')+' 北京时间';item.append(time);
-      const title=plain(row.title),content=plain(row.content);
-      const heading=document.createElement('h3'),link=document.createElement('a');link.href='https://www.cls.cn/detail/'+row.id;link.target='_blank';link.rel='noopener noreferrer';link.textContent=title||content.slice(0,75)+(content.length>75?'…':'');heading.append(link);item.append(heading);
-      const body=document.createElement('p');body.textContent=content;item.append(body);fragment.append(item);
+    const range=bounds(),oldTop=ui.feed.scrollTop,expanded=new Set([...ui.feed.querySelectorAll('details[open]')].map(x=>x.closest('article').dataset.id));
+    for(const [id,row]of data.rows)if(row.timestamp<range.start||row.timestamp>=range.end){data.rows.delete(id);data.cache.delete(id);}
+    const ctx=context(),key=JSON.stringify(ctx),rows=[...data.rows.values()].map(row=>({row,a:analysis(row,ctx,key)}));
+    const latest=(x,y)=>y.row.timestamp-x.row.timestamp||y.row.id-x.row.id;
+    rows.sort((x,y)=>ui.sort.value==='latest'?latest(x,y):Number(y.a.pin)-Number(x.a.pin)||latest(x,y));
+    ui.context.textContent=ctx.code?'关联股票：'+ctx.name+'（'+ctx.code+'） · '+(ctx.industry.length?'行业：'+ctx.industry.join(' / '):'行业尚未取得')+' · 已取得 '+ctx.tags.length+' 个标签；更换股票后自动重评。':'未选择股票：仍分析全部电报，并独立识别大盘 / 行业重点；选股后再叠加关联判断。';
+    const fragment=document.createDocumentFragment();let group='';
+    for(const {row,a}of rows){
+      const nextGroup=a.pin?'置顶关注':'其他电报';
+      if(ui.sort.value!=='latest'&&group!==nextGroup){group=nextGroup;fragment.append(textNode('h3',group+' · 最新在前','cls-group'));}
+      const item=document.createElement('article');item.className='cls-item'+(row.important?' cls-important':'')+(a.pin?' cls-pinned':'');item.dataset.id=String(row.id);
+      const time=textNode('time',new Date((row.timestamp+8*3600)*1000).toISOString().slice(0,19).replace('T',' ')+' 北京时间');time.dateTime=row.time;item.append(time);
+      const badges=document.createElement('div');badges.className='cls-badges';
+      for(const t of [a.pin?'自动置顶':'不置顶','关注分 '+a.score+'/100',a.scope,a.direction])badges.append(textNode('span',t,'tag'));
+      item.append(badges);const heading=document.createElement('h3'),link=textNode('a',row.title||row.content.slice(0,75)||(row.content?'':'源站未提供标题及正文'));
+      link.href='https://www.cls.cn/detail/'+row.id;link.target='_blank';link.rel='noopener noreferrer';heading.append(link);item.append(heading);
+      item.append(textNode('p',row.content||'源站未提供可用电报正文；仅能依据已取得的标题做有限筛选，请查看官方原文。'));
+      item.append(textNode('div',(a.pin?'置顶原因：'+a.pinReasons.join('；'):'暂不置顶：未达到市场 / 行业高关注条件，或未命中当前股票关联。'),'cls-reason'));
+      const details=document.createElement('details');details.open=expanded.has(String(row.id));details.append(textNode('summary','查看逻辑、评分依据与局限（规则研判）'));
+      const list=document.createElement('ul');for(const l of a.logic||[])list.append(textNode('li',l));
+      for(const c of a.components||[])list.append(textNode('li',typeof c==='string'?c:c.name+'：'+(c.points>0?'+':'')+c.points+' 分'));
+      if(a.matched?.length)list.append(textNode('li','关联命中：'+a.matched.join('；')));
+      if(a.evidence?.length)list.append(textNode('li','原文命中：'+a.evidence.join('；')));
+      details.append(list,textNode('p',a.caveat||'仅按已取得的电报内容作规则分析，不是价格预测。','hint'));item.append(details);fragment.append(item);
     }
-    if(!rows.length){const empty=document.createElement('p');empty.className='empty';empty.textContent='所选日期暂无可显示的电报；也可能已超出官方接口保留范围。';fragment.append(empty);}
+    if(!rows.length)fragment.append(textNode('p',data.loaded?'所选日期暂无源站可返回的电报，或已超出官方保留范围。':'正在读取最新一批电报…','empty'));
     ui.feed.replaceChildren(fragment);ui.feed.scrollTop=oldTop;
-    ui.count.textContent=label()+' · 已加载 '+rows.length+' 条';
+    ui.count.textContent='已分析 '+rows.length+' 条 · 置顶 '+rows.filter(x=>x.a.pin).length+' 条'+(data.newCount?' · 本轮新增 '+data.newCount+' 条':'');status();
   }
-  async function load(kind='refresh'){
-    if(data.busy)return;
-    const generation=data.generation,mode=data.date,isMore=kind==='more',cursor=data.cursor;
-    if(isMore&&cursor===null)return;
-    data.busy=true;buttons();ui.status.classList.remove('error');
-    ui.status.textContent=(isMore?'正在加载更早电报':'正在读取官方最新电报')+' · '+label();
-    const controller=new AbortController();data.controller=controller;const timer=setTimeout(()=>controller.abort(),20000);
+  async function request(cursor,generation){
+    const url=new URL(API);const mode=data.date;if(mode)url.searchParams.set('date',mode);if(cursor!==null)url.searchParams.set('cursor',String(cursor));
+    const controller=new AbortController();data.controllers.add(controller);const timer=setTimeout(()=>controller.abort(),20000);
     try{
-      const url=new URL(API);if(mode)url.searchParams.set('date',mode);if(isMore)url.searchParams.set('cursor',String(cursor));
-      const response=await fetch(url,{signal:controller.signal,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer'});
-      if(!response.ok)throw Error('服务暂不可用');const result=await response.json();
-      if(generation!==data.generation)return;
+      const response=await fetch(url,{signal:controller.signal,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer'});if(!response.ok)throw Error('官方服务暂不可用');
+      const result=await response.json();if(generation!==data.generation)return null;
       if(result.source!=='财联社'||!Array.isArray(result.items)||(result.date||'')!==mode)throw Error('数据格式异常');
-      const range=bounds();
-      for(const row of result.items)if(Number.isSafeInteger(row.id)&&Number.isFinite(row.timestamp)&&row.timestamp>=range.start&&row.timestamp<range.end)data.rows.set(row.id,row);
-      // A latest refresh must never reset the older-history pagination position.
-      if(isMore||!data.loaded)data.cursor=Number.isSafeInteger(result.next_cursor)?result.next_cursor:null;data.loaded=true;
-      render();
-      const stamp=new Date(result.fetched_at);const text=Number.isFinite(stamp.getTime())?new Date(stamp.getTime()+8*3600000).toISOString().slice(11,19):'刚刚';
-      const live=!mode||mode===range.today;
-      ui.status.textContent=label()+' · 官方数据读取于 '+text+'（北京时间）'+(live&&ui.auto.checked?' · 每 30 秒更新':live?' · 自动更新已关闭':' · 历史日期，仅手动刷新');
-    }catch(error){
-      if(generation!==data.generation)return;
-      ui.status.classList.add('error');ui.status.textContent='财联社电报暂未更新'+(data.rows.size?'，保留上次已加载内容':'')+'。请稍后点“刷新电报”重试，或查看官方原文。';
-    }finally{clearTimeout(timer);if(generation===data.generation){data.busy=false;data.controller=null;buttons();}}
+      return result;
+    }finally{clearTimeout(timer);data.controllers.delete(controller);}
   }
-  function choose(date){
-    if(date&&(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date>chinaDate())){ui.date.value=data.date;ui.status.textContent='请选择今天或更早的日期。';return;}
-    data.controller?.abort();data.generation++;data.busy=false;data.controller=null;data.date=date;data.rows.clear();data.cursor=null;data.loaded=false;ui.date.value=date;ui.feed.replaceChildren();ui.feed.scrollTop=0;ui.count.textContent='';load();
+  function merge(result){
+    const range=bounds();let added=0;
+    for(const row of result.items)if(Number.isSafeInteger(row.id)&&row.id>0&&Number.isFinite(row.timestamp)&&row.timestamp>=range.start&&row.timestamp<range.end){
+      if(!data.rows.has(row.id))added++;data.rows.set(row.id,{...row,title:plain(row.title),content:plain(row.content)});
+    }
+    return added;
   }
-  ui.date.max=chinaDate();data.today=chinaDate();
-  ui.date.addEventListener('change',()=>choose(ui.date.value));ui.recent.addEventListener('click',()=>choose(''));
-  ui.refresh.addEventListener('click',()=>load());ui.more.addEventListener('click',()=>load('more'));
-  ui.auto.addEventListener('change',()=>{if(ui.auto.checked&&(!data.date||data.date===chinaDate()))load();else ui.status.textContent+=ui.auto.checked?' · 历史日期不自动更新':' · 自动更新已关闭';});
+  function nextCursor(result,current=null){const n=result.next_cursor;return Number.isSafeInteger(n)&&(current===null||n<current)&&n>=bounds().start?n:null;}
+  function scheduleBackfill(){
+    clearTimeout(data.backTimer);
+    if(data.loaded&&!data.backBusy&&!document.hidden&&(!data.complete||data.gaps.length))data.backTimer=setTimeout(backfill,250);
+  }
+  async function load(){
+    if(data.headBusy)return;
+    const generation=data.generation;data.headBusy=true;status();
+    const previousMax=Math.max(0,...[...data.rows.values()].map(r=>r.timestamp));
+    try{
+      const result=await request(null,generation);if(!result)return;
+      data.newCount=merge(result);const next=nextCursor(result),oldest=Math.min(...result.items.map(r=>r.timestamp));
+      if(!data.loaded){data.cursor=next;data.complete=next===null;data.loaded=true;}
+      else if(previousMax&&Number.isFinite(oldest)&&oldest>previousMax&&next!==null&&!data.gaps.some(g=>g.stop===previousMax))data.gaps.push({cursor:next,stop:previousMax});
+      const stamp=new Date(result.fetched_at);data.stamp=Number.isFinite(stamp.getTime())?new Date(stamp.getTime()+8*3600000).toISOString().slice(11,19):'刚刚';data.headError='';render();
+    }catch(error){if(generation===data.generation){data.headError='最新电报暂未更新，保留上次内容及分析；下轮重试或查看官方原文。';status();}}
+    finally{if(generation===data.generation){data.headBusy=false;status();scheduleBackfill();}}
+  }
+  async function backfill(){
+    if(data.backBusy||!data.loaded)return;
+    const gap=data.gaps[0],cursor=gap?gap.cursor:data.cursor;if(cursor===null){data.complete=true;status();return;}
+    const generation=data.generation;data.backBusy=true;status();let success=false;
+    try{
+      const result=await request(cursor,generation);if(!result)return;
+      merge(result);const next=nextCursor(result,cursor),oldest=Math.min(...result.items.map(r=>r.timestamp));
+      if(gap){if(next===null||oldest<=gap.stop)data.gaps.shift();else gap.cursor=next;}
+      else{data.cursor=next;data.complete=next===null;}
+      data.historyError='';success=true;render();
+    }catch(error){if(generation===data.generation){data.historyError='failed';status();}}
+    finally{if(generation===data.generation){data.backBusy=false;status();if(success)scheduleBackfill();}}
+  }
+  function choose(date,followToday=date===chinaDate()){
+    if(date&&(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date>chinaDate())){ui.date.value=data.date;return;}
+    for(const c of data.controllers)c.abort();data.controllers.clear();clearTimeout(data.backTimer);data.generation++;
+    Object.assign(data,{date,followToday,rows:new Map(),cache:new Map(),cursor:null,gaps:[],headBusy:false,backBusy:false,loaded:false,complete:false,historyError:'',headError:'',stamp:'',newCount:0});
+    ui.date.value=date;ui.feed.scrollTop=0;render();load();
+  }
+  ui.date.max=chinaDate();ui.date.value=data.date;
+  ui.date.addEventListener('change',()=>choose(ui.date.value));ui.recent.addEventListener('click',()=>choose('',false));
+  ui.refresh.addEventListener('click',()=>load());ui.more.addEventListener('click',()=>{data.historyError='';backfill();});
+  ui.sort.addEventListener('change',render);ui.auto.addEventListener('change',()=>{status();if(ui.auto.checked&&(!data.date||data.date===chinaDate()))load();});
   function tick(){
     const today=chinaDate();ui.date.max=today;
-    if(today!==data.today){data.today=today;if(!data.date){choose('');return;}}
-    if(!document.hidden&&ui.auto.checked&&(!data.date||data.date===today))load();
+    if(today!==data.today){data.today=today;if(data.followToday||!data.date){choose(data.followToday?today:'',data.followToday);return;}}
+    if(!document.hidden){if(ui.auto.checked&&(!data.date||data.date===today))load();else scheduleBackfill();}
   }
+  let contextTimer;const observer=new MutationObserver(()=>{clearTimeout(contextTimer);contextTimer=setTimeout(render,150);});
+  for(const id of ['stockTitle','stockIndustry','stockTags'])if(el(id))observer.observe(el(id),{childList:true,subtree:true,characterData:true});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick();});
-  setInterval(tick,30000);load();
+  setInterval(tick,30000);render();load();
 })();
+
 </script>
 <!-- End isolated CLS telegraph module. -->
 <!-- THS upcoming events: isolated addition; existing modules remain unchanged. -->
