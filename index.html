@@ -184,6 +184,77 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 })();
 </script>
 <!-- End isolated CLS telegraph module. -->
+<!-- THS upcoming events: isolated addition; existing modules remain unchanged. -->
+<style>
+#thsUpcoming .ths-up-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#thsUpcoming .ths-up-status{font-size:13px;color:var(--muted);min-height:22px;margin:12px 0}
+#thsUpcoming .ths-up-status.error{color:#a33}
+#thsUpcoming .ths-up-feed{max-height:620px;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--line)}
+#thsUpcoming .ths-up-item{padding:15px 2px;border-bottom:1px solid var(--line)}
+#thsUpcoming .ths-up-date{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+#thsUpcoming .ths-up-today{color:#b35024;font-weight:650}
+#thsUpcoming h3{font-size:15px;line-height:1.7;margin:0 0 8px;overflow-wrap:anywhere}
+#thsUpcoming .ths-up-block{display:inline-block;font-size:12px;background:#edf3fc;color:#2863a3;padding:2px 9px;border-radius:12px;margin:2px 6px 0 0}
+#thsUpcoming button:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:520px){#thsUpcoming .ths-up-feed{max-height:540px}}
+</style>
+<section class="card" id="thsUpcoming" aria-labelledby="thsUpcomingTitle">
+  <div class="section-head" style="flex-wrap:wrap"><h2 id="thsUpcomingTitle">同花顺 · 热点大事预期</h2><div class="ths-up-tools"><span class="small">今天及未来 · 北京时间</span><button class="secondary" id="thsUpcomingRefresh" type="button">刷新大事预期</button></div></div>
+  <p class="hint">独立展示全市场即将发生的大事，不跟随股票筛选。按同花顺事件日期由近到远排列，仅保留今天及以后；相同日期、相同标题合并展示。日期及关联板块来自同花顺，预期安排可能调整，请以主办方正式信息为准。</p>
+  <p class="ths-up-status" id="thsUpcomingStatus" role="status" aria-live="polite">正在读取同花顺大事预期…</p>
+  <div class="ths-up-feed" id="thsUpcomingFeed" aria-label="今天及未来热点大事列表"></div>
+</section>
+<script>
+(()=>{
+  'use strict';
+  const API='https://8768-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/ths-events';
+  const byId=id=>document.getElementById(id),feed=byId('thsUpcomingFeed'),status=byId('thsUpcomingStatus'),refresh=byId('thsUpcomingRefresh');
+  const dateFormat=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'});
+  const today=()=>{const parts=dateFormat.formatToParts(new Date()),p=Object.fromEntries(parts.map(v=>[v.type,v.value]));return `${p.year}-${p.month}-${p.day}`;};
+  let rows=[],busy=false,loaded=false,lastDay=today(),lastFetch=0,readAt='';
+  function validDay(day){if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day))return false;const d=new Date(day+'T00:00:00Z');return !isNaN(d)&&d.toISOString().slice(0,10)===day;}
+  function filtered(items,day){
+    const merged=new Map();
+    for(const raw of items){
+      if(!raw||!validDay(raw.date)||raw.date<day||typeof raw.title!=='string'||!raw.title.trim())continue;
+      const title=raw.title.trim(),key=raw.date+'\n'+title;
+      if(!merged.has(key))merged.set(key,{date:raw.date,title,blocks:[]});
+      const item=merged.get(key);
+      for(const name of Array.isArray(raw.blocks)?raw.blocks:[])if(typeof name==='string'&&name.trim()&&!item.blocks.includes(name.trim()))item.blocks.push(name.trim());
+    }
+    return [...merged.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title,'zh-CN'));
+  }
+  function render(){
+    const day=today();lastDay=day;rows=filtered(rows,day);const frag=document.createDocumentFragment();
+    for(const row of rows){
+      const article=document.createElement('article');article.className='ths-up-item';article.dataset.date=row.date;
+      const time=document.createElement('time');time.dateTime=row.date;time.className='ths-up-date'+(row.date===day?' ths-up-today':'');time.textContent=row.date+(row.date===day?' · 今天':' · 即将发生');article.append(time);
+      const heading=document.createElement('h3');heading.textContent=row.title;article.append(heading);
+      for(const name of row.blocks){const tag=document.createElement('span');tag.className='ths-up-block';tag.textContent=name;article.append(tag);}
+      frag.append(article);
+    }
+    if(!rows.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=loaded?'数据源暂无今天及未来的大事预期。':'尚未读取到大事预期。';frag.append(empty);}
+    feed.replaceChildren(frag);
+    if(loaded)status.textContent=`共 ${rows.length} 条 · 仅 ${day} 及以后 · 源数据读取于 ${readAt}（北京时间） · 每 5 分钟检查更新`;
+  }
+  async function load(){
+    if(busy)return;busy=true;refresh.disabled=true;status.classList.remove('error');status.textContent='正在读取同花顺大事预期…';
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);
+    try{
+      const response=await fetch(API,{cache:'no-store',credentials:'omit',signal:controller.signal});
+      if(!response.ok)throw Error('unavailable');const data=await response.json();
+      if(data.source!=='同花顺'||!Array.isArray(data.items)||!data.fetched_at||isNaN(new Date(data.fetched_at)))throw Error('invalid');
+      rows=filtered(data.items,today());readAt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(data.fetched_at));loaded=true;lastFetch=Date.now();render();
+    }catch{
+      render();status.classList.add('error');status.textContent='同花顺大事预期暂时读取失败，请稍后点击刷新。'+(loaded?'当前保留上次读取中仍属于今天及未来的 '+rows.length+' 条。':'');
+    }finally{clearTimeout(timeout);busy=false;refresh.disabled=false;}
+  }
+  function tick(){if(document.hidden)return;if(today()!==lastDay){render();void load();}else if(Date.now()-lastFetch>=300000)void load();}
+  refresh.addEventListener('click',()=>void load());document.addEventListener('visibilitychange',tick);setInterval(tick,30000);void load();
+})();
+</script>
+<!-- End isolated THS upcoming events module. -->
+
 
   <div class="footer">浏览器需要联网访问腾讯行情和东方财富公开接口。第三方接口策略变化、网络或浏览器安全设置可能导致部分数据暂时不可用。</div>
 </main>
