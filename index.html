@@ -585,23 +585,23 @@ function tickCountTotalText(rawRows=[]){
 function tickLoadedSummary(rows=[]){
   $('thsdkLoadedSummary').textContent=tickCountTotalText(rows);
 }
-function tickRowStats(rawRows=[]){
+function tickRowStats(rawRows=[],counts=tickCountRows(rawRows).counts){
   const number=value=>value==null||typeof value==='boolean'||String(value).trim()===''?NaN:Number(value);
-  const rows=rawRows.map((row,index)=>({row,index,volume:number(row.volume),price:number(row.price)})).filter(r=>Number.isFinite(r.volume)&&r.volume>=0&&Number.isFinite(r.price)&&r.price>0&&Number.isFinite(r.volume*r.price));
+  const rows=rawRows.map((row,index)=>{const count=counts.get(row),volume=number(row.volume),price=number(row.price);return {row,index,count,volume,price,perTradeVolume:volume/count};}).filter(r=>Number.isSafeInteger(r.count)&&r.count>0&&Number.isFinite(r.volume)&&r.volume>=0&&Number.isFinite(r.price)&&r.price>0&&Number.isFinite(r.perTradeVolume*r.price));
   if(!rows.length)return {total:rawRows.length,count:0,skipped:rawRows.length,min:null,max:null,remaining:0,averageLots:null,averageAmount:null};
   // 并列按当前表格顺序取首条最小、末条最大；全相等也只剔除两条不同记录。
-  let min=rows[0],max=rows[0];for(const r of rows){if(r.volume<min.volume)min=r;if(r.volume>=max.volume)max=r;}
-  const rest=rows.filter(r=>r.index!==min.index&&r.index!==max.index),sum=rest.reduce((s,r)=>({volume:s.volume+r.volume,amount:s.amount+r.volume*r.price}),{volume:0,amount:0});
+  let min=rows[0],max=rows[0];for(const r of rows){if(r.perTradeVolume<min.perTradeVolume)min=r;if(r.perTradeVolume>=max.perTradeVolume)max=r;}
+  const rest=rows.filter(r=>r.index!==min.index&&r.index!==max.index),sum=rest.reduce((s,r)=>({volume:s.volume+r.perTradeVolume,amount:s.amount+r.perTradeVolume*r.price}),{volume:0,amount:0});
   return {total:rawRows.length,count:rows.length,skipped:rawRows.length-rows.length,min,max,remaining:rest.length,averageLots:rest.length?sum.volume/rest.length/100:null,averageAmount:rest.length?sum.amount/rest.length/10000:null};
 }
-function tickRenderRowStats(rows=[]){
-  const stats=tickRowStats(rows),box=$('thsdkRowStats');box.replaceChildren();
+function tickRenderRowStats(rows=[],counts){
+  const stats=tickRowStats(rows,counts),box=$('thsdkRowStats');box.replaceChildren();
   const line=text=>{const div=document.createElement('div');div.textContent=text;box.appendChild(div);},fmt=n=>n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if(!stats.count){line(rows.length?'成交记录统计：暂无有效价格和成交量，无法计算。':'成交记录统计：暂无可用记录。');return;}
-  const record=r=>`${fmt(r.volume/100)} 手 / ${fmt(r.volume*r.price/10000)} 万元（${tickClock(r.row.time)||'时间暂不可用'}）`;
-  line(`单条最大：${record(stats.max)}`);line(`单条最小：${record(stats.min)}`);
-  line(stats.count>=3?`各剔除一条最大、最小后，平均每条：${fmt(stats.averageLots)} 手 / ${fmt(stats.averageAmount)} 万元（剩余 ${stats.remaining} 条）`:'去极值平均：有效记录不足 3 条，暂不计算。');
-  line(`仅统计当前明细已加载的 ${stats.total} 条记录；每条约为 3 秒聚合，并非一笔真实成交。按手数选极值；并列按表格顺序取首条最小、末条最大，各只剔除一条。金额＝成交价×成交股数÷10000；零成交记录保留${stats.skipped?`；${stats.skipped} 条价格或成交量无效，未计入统计`:''}。`);
+  if(!stats.count){line(rows.length?'成交记录统计：暂无价格、成交量及正笔数均有效的记录，无法计算。':'成交记录统计：暂无可用记录。');return;}
+  const record=r=>`${fmt(r.perTradeVolume/100)} 手 / ${fmt(r.perTradeVolume*r.price/10000)} 万元（${tickClock(r.row.time)||'时间暂不可用'}；${r.count===1?'1 笔，真实单笔':`${r.count} 笔，折算均笔`}）`;
+  line(`折算单笔最大：${record(stats.max)}`);line(`折算单笔最小：${record(stats.min)}`);
+  line(stats.count>=3?`各剔除一条最大、最小后，平均每笔：${fmt(stats.averageLots)} 手 / ${fmt(stats.averageAmount)} 万元（剩余 ${stats.remaining} 条记录的折算值取算术平均）`:'去极值平均：有效记录不足 3 条，暂不计算。');
+  line(`仅统计当前明细已加载的 ${stats.total} 条记录；每行手数÷该行笔数＝折算单笔手数，1 笔时保留真实手数；多笔聚合无法还原其中真实单笔极值。按未四舍五入的折算单笔手数选极值；并列按表格顺序取首条最小、末条最大，各只剔除一条。单笔金额＝成交价×成交股数÷笔数÷10000${stats.skipped?`；${stats.skipped} 条价格、成交量或笔数无效（含零笔、未知笔数），未计入统计`:''}。`);
 }
 function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary();tickRenderRowStats(); }
 function tickStop(){depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
@@ -679,7 +679,7 @@ function tickRender(data){
   const wrap=$('thsdkTableWrap'),body=$('thsdkTickBody'),oldTop=wrap.scrollTop;
   let anchor=null;
   if(!wrap.hidden&&oldTop>1){const visibleTop=oldTop+$('thsdkTickHead').offsetHeight,index=[...body.children].findIndex(tr=>tr.offsetTop+tr.offsetHeight>visibleTop);if(index>=0&&tickState.viewRows[index]){const key=tickRowFingerprint(tickState.viewRows[index]);anchor={key,occurrence:tickState.viewRows.slice(0,index+1).filter(r=>tickRowFingerprint(r)===key).length,offset:oldTop-body.children[index].offsetTop};}}
-  tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);tickRenderRowStats(rows);if(!rows.length)return true;
+  tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);tickRenderRowStats(rows,counts);if(!rows.length)return true;
   const head=document.createElement('tr');for(const label of ['时间（北京时间）','成交价','成交量（手）','笔数']){const th=document.createElement('th');th.textContent=label;head.appendChild(th);}$('thsdkTickHead').appendChild(head);
   const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中及当天首条收盘普通成交（可延迟返回）：按同日累计笔数差值计算，不按固定延迟秒数截断；已结算收盘后的盘后成交：有成交为1笔；零成交保留并显示0笔；—表示缺少可靠前值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
   if(anchor){let occurrence=0,index=rows.findIndex(row=>tickRowFingerprint(row)===anchor.key&&++occurrence===anchor.occurrence);wrap.scrollTop=index>=0?body.children[index].offsetTop+anchor.offset:oldTop;}else wrap.scrollTop=wrap.hidden?0:oldTop;
