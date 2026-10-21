@@ -107,6 +107,15 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 #clsTelegraph .cls-group{font-size:14px;margin:0;padding:10px;background:#eef3f9}
 #clsTelegraph select{height:42px;border:1px solid #cfd8e5;border-radius:8px;padding:0 7px;background:white;color:var(--ink);max-width:100%}
 #clsCoverage{padding:9px;background:#f2f6fc;border-radius:6px;line-height:1.8}
+#clsTelegraph .cls-pin-summary{padding:12px;background:#fff7e6;border:1px solid #edd5a9;border-radius:8px;margin:10px 0;line-height:1.8;font-size:14px;overflow-wrap:anywhere}
+#clsTelegraph .cls-pin-summary strong{display:block;color:#825821}
+#clsTelegraph .cls-impact{margin-top:9px;padding:10px 12px;background:#f3f7fc;border-radius:7px;border:1px solid #dde7f3;font-size:13px;line-height:1.8;overflow-wrap:anywhere}
+#clsTelegraph .cls-impact p{font-size:13px;margin:3px 0;line-height:1.8;white-space:normal}
+#clsTelegraph .cls-impact .cls-limits{color:#64748b;font-size:12px}
+#clsTelegraph .cls-stock-pin{border-left-color:#1768b2;background:#f8fbff}
+#clsTelegraph .cls-group[data-group=stock]{color:#155a98;background:#eaf3ff}
+#clsTelegraph .cls-group[data-group=major]{color:#825821;background:#fff3dd}
+@media(max-width:520px){#clsTelegraph .cls-impact{padding:9px}#clsTelegraph .cls-pin-summary{padding:10px}#clsTelegraph .cls-badges .tag{white-space:normal;max-width:100%;overflow-wrap:anywhere}}
 </style>
 
 <section class="card" id="clsTelegraph" aria-labelledby="clsTitle">
@@ -116,12 +125,13 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     <button class="secondary" id="clsRecent" type="button">最近三天</button>
     <button class="secondary" id="clsRefresh" type="button">刷新电报</button>
     <label class="cls-auto"><input id="clsAuto" type="checkbox" checked> 每 30 秒更新</label>
-    <label class="cls-date" for="clsSort">排序<select id="clsSort"><option value="pinned">置顶优先 · 组内最新在前</option><option value="latest">全部按最新时间</option></select></label>
+    <label class="cls-date" for="clsSort">排序<select id="clsSort"><option value="pinned">股票关联 → 市场/行业重大 → 其他</option><option value="latest">全部按最新时间</option></select></label>
   </div>
-  <p class="hint" id="clsHelp">默认今天：先分析最新一批，再从新到旧自动补齐当天源站可返回的电报，无需输入股票。高影响大盘 / 行业消息独立判断置顶；选股后，直接关联该股票或其行业、板块、标签的消息也置顶。所有电报均分析，不仅分析置顶条目。</p>
+  <p class="hint" id="clsHelp">默认今天，自动补齐当天可取得的电报。先置顶当前股票名称、代码、行业、板块或标签关联消息，再列其他市场 / 行业重大消息；各类内最新在前。每条直接展示影响行业、板块、方向、强弱与传导路径，无需展开。所有电报均按本地规则分析，关联不等于利好。</p>
   <p class="hint" id="clsContext"></p>
   <p class="cls-status" id="clsStatus" role="status" aria-live="polite">正在读取财联社官方最新电报…</p>
   <p class="small" id="clsCoverage" role="status" aria-live="polite"></p>
+  <div class="cls-pin-summary" id="clsPinSummary" role="status" aria-live="polite"></div>
   <div class="cls-feed" id="clsFeed" aria-label="财联社电报与自动分析列表"></div>
   <div class="cls-bottom"><button class="secondary" id="clsMore" type="button" disabled>正在自动补齐…</button><span class="small" id="clsCount"></span></div>
   <details><summary>自动评分和置顶如何判断？</summary><p class="hint">使用本地可解释规则（不是大模型深度研判），关注分为 0–100 分，不是涨跌概率或收益预测。按实质政策、跨市场风险、行业供需与技术事件加权，源站重点标记仅作少量加权；传闻、拟议和缺正文降低评分。大盘 / 行业事件达到关注门槛时置顶；与当前股票直接或行业标签关联时独立置顶，关联不表示利好。每条可展开查看本次命中与加减分。词义、否定和多主体关系仍可能误判，请核对原文。</p></details>
@@ -225,7 +235,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = CLSAnalyze
   'use strict';
   const API='https://8767-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/cls-telegraph';
   const el=id=>document.getElementById(id);
-  const ui={date:el('clsDate'),recent:el('clsRecent'),refresh:el('clsRefresh'),auto:el('clsAuto'),status:el('clsStatus'),feed:el('clsFeed'),more:el('clsMore'),count:el('clsCount'),coverage:el('clsCoverage'),context:el('clsContext'),sort:el('clsSort')};
+  const ui={date:el('clsDate'),recent:el('clsRecent'),refresh:el('clsRefresh'),auto:el('clsAuto'),status:el('clsStatus'),feed:el('clsFeed'),more:el('clsMore'),count:el('clsCount'),coverage:el('clsCoverage'),context:el('clsContext'),sort:el('clsSort'),pins:el('clsPinSummary')};
   const chinaDate=(ms=Date.now())=>new Date(ms+8*3600000).toISOString().slice(0,10);
   const data={date:chinaDate(),followToday:true,rows:new Map(),cache:new Map(),cursor:null,gaps:[],generation:0,headBusy:false,backBusy:false,controllers:new Set(),today:chinaDate(),loaded:false,complete:false,historyError:'',headError:'',stamp:'',newCount:0,backTimer:null};
   function bounds(){const start=Date.parse((data.date||chinaDate(Date.now()-2*86400000))+'T00:00:00+08:00')/1000;return {start,end:data.date?start+86400:Date.now()/1000+1};}
@@ -256,26 +266,89 @@ if (typeof module !== 'undefined' && module.exports) module.exports = CLSAnalyze
     const value=CLSAnalyzer.analyze(row,ctx);data.cache.set(row.id,{fingerprint,value});return value;
   }
   function textNode(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;}
+  // Presentation-only interpretation: no changes to analyzer scoring, thresholds or refresh.
+  function pinKind(a,ctx){return a.pin?(ctx.code&&a.matched?.length?'stock':'major'):'other';}
+  function impactSummary(row,a,ctx){
+    const text=(row.title||'')+' '+(row.content||''), industries=[],sectors=[],paths=[];
+    const add=(i,b,re)=>{if(re.test(text)){industries.push(i);sectors.push(b);}};
+    add('银行','银行',/银行|国有大行|城商行|农商行/);
+    add('证券服务','券商',/券商|证券业|经纪业务|投行业务/);
+    add('半导体','芯片 / 集成电路',/半导体|芯片|集成电路|晶圆|光刻|封装测试/);
+    add('电气设备','光伏',/光伏|硅料|硅片|太阳能组件|逆变器/);
+    add('电池 / 汽车','锂电 / 新能源车 / 储能',/锂电|动力电池|碳酸锂|电池产业链|新能源汽车|宁德时代|储能/);
+    add('房地产 / 建筑服务','地产链',/房地产|楼市|房企|住房|保障房/);
+    add('医药 / 医疗','创新药 / 医疗器械',/医药|创新药|医疗器械|医院|生物医药/);
+    add('有色金属','有色 / 贵金属',/有色金属|铜价|铝价|稀土|黄金|白银|镍价/);
+    add('计算机 / 通信','AI / 算力 / 数据要素',/人工智能|\bAI\b|算力|大模型|数据要素|光模块/);
+    add('国防军工','军工 / 航空航天',/军工|国防|航空航天/);
+    add('零售 / 食品饮料 / 家电','消费',/消费|零售|家电|食品饮料|白酒/);
+    add('石油化工 / 能源','油气 / 能源链',/原油|油价|石油|天然气|能源供应/);
+    add('交通运输','航运 / 航空 / 物流',/航运|船舶|航空枢纽|机场|集运指数|物流/);
+    add('电信运营','通信运营商',/中国移动|中国电信|中国联通|电信运营/);
+    const linked=(a.matched||[]).filter(x=>x.startsWith('行业：')).map(x=>x.slice(3));
+    if(linked.length)sectors.push('关联关键词：'+linked.join(' / '));
+    if(a.matched?.some(x=>/^(公司|代码)：/.test(x))){industries.push(...ctx.industry);sectors.push(ctx.name+'（个股）');}
+    const macro=a.components?.some(c=>c.name==='货币/财政/监管');
+    if(macro){sectors.push('全市场 / 金融 / 利率敏感板块');paths.push('货币或监管政策调整 → 资金成本、流动性及合规约束变化 → 影响估值与风险偏好；需区分净投放、到期对冲和实际执行力度，不能一概视为利好。');}
+    if(/原油|油价|石油|天然气/.test(text))paths.push('能源价格或供应变化 → 油气生产端收入与运输、化工等下游成本反向变化 → 产业链利润分化；需核对价格方向、持续性和实际供给损失。');
+    if(/碳酸锂|硅料|硅片|铜价|铝价|价格暴涨|价格暴跌|大幅涨价|大幅降价/.test(text))paths.push('原料或产品价格变动 → 上游销售收入与下游采购成本反向变化 → 利润沿产业链重新分配；现货/期货、库存和合同价格不同，不能等同全行业同涨同跌。');
+    if(/出口管制|禁运|制裁|封锁/.test(text))paths.push('贸易或供应限制 → 相关产品供货、交付及海外收入承压，也可能催生替代需求 → 受限企业与替代供应商影响分化；需确认适用范围。');
+    if(/回购|增持|减持/.test(text)&&!/(?:逆|正)回购|公开市场/.test(text))paths.push('公司或股东买卖计划 → 流通供需与信心预期变化 → 可能影响个股估值；计划不等于成交，需核对金额、期限和执行进度。');
+    if(/净利|营收|业绩|亏损|盈利/.test(text))paths.push('业绩或盈利预期变化 → 修正公司现金流和估值预期 → 先影响相关公司，再可能传导至同业情绪；同比、环比及一次性损益须分开，不由单家公司外推全行业。');
+    if(/中标|订单|签署|获批|量产|突破/.test(text))paths.push('订单、审批或技术进展 → 可能改变后续交付能力、收入或竞争格局 → 影响相关企业及配套产业链预期；仍需验证合同规模、量产节奏和利润兑现。');
+    if(/停产|限产|减产|供需失衡|供应中断/.test(text))paths.push('供给数量或生产节奏变化 → 产品价格及交付预期变化 → 上下游利润与景气预期分化；必须区分供给收缩和需求不足导致的停减产。');
+    if(/扶持|补贴|新政|政策|方案/.test(text)&&!macro)paths.push('政策或支持措施 → 相关行业投资、需求或执行成本变化 → 影响产业链订单与盈利预期；以适用地区、实施时间和资金落地为准。');
+    if(/指数|美股|港股|全球股市|创业板|沪指|深成指/.test(text))paths.push('指数与龙头价格表现 → 资金风险偏好和同板块情绪传导 → 可能放大短线波动；这是行情或情绪线索，不代表新增基本面变化。');
+    if(/宁德时代.{0,20}(?:跌|下挫|新低)/.test(text))paths.unshift('宁德时代下跌 → 电池链龙头及权重股情绪承压 → 可能传导至锂电板块和创业板风险偏好；价格下跌本身不能证明整个行业盈利恶化。');
+    if(/碳酸锂.{0,12}(?:跌|下行|降价)/.test(text))paths.unshift('碳酸锂价格下跌 → 锂资源与锂盐企业售价承压，同时电池制造采购成本可能下降 → 上游偏负面、下游成本端可能受益，仍受库存与合同价格影响。');
+    if(/走强|上涨|涨停/.test(text)&&/走弱|下跌|跌超|跌逾|下挫/.test(text))paths.unshift('本条同时包含上涨与下跌对象，属于板块分化而非全市场同向利好 / 利空；应分别看原文所列上涨、下跌板块，不能把整条方向套到每家公司。');
+    if(/需求/.test(text)&&/预期|担忧|可期|悲观|乐观|回应/.test(text))paths.unshift('行业需求观点或公司回应 → 可能改变订单与景气预期 → 传导至相关龙头及同业情绪；这属于预期层信息，不等于已确认的订单或利润，需后续经营数据验证。');
+    if(!paths.length)paths.push(...(a.logic||[]).filter(x=>!/^保留财联社|^未匹配到/.test(x)));
+    if(!paths.length)paths.push('当前正文未提供足以确认的供需、成本、订单或政策变化，暂无法建立明确传导链；不强行判断受益公司。');
+    const distinct=x=>[...new Set(x.filter(Boolean))];
+    const uncertain=/辟谣|澄清|否认|传闻|据传|尚未|未获证实|拟|计划/.test(text);
+    const major=a.components?.some(c=>['货币/财政/监管','跨市场风险','行业供需/技术'].includes(c.name));
+    const strength=!row.content||text.trim().length<18?'待确认（正文不足）':uncertain?'待确认（拟议 / 否定 / 不确定措辞）':major&&a.pin?'强（命中重大事件规则）':a.matched?.length?'一般（关联关注，不代表重大冲击）':'有限（未命中重大事件规则）';
+    const direction={'偏多':'利好倾向','偏空':'利空倾向','中性':'中性 / 待确认','分化':'分化（利好利空并存）'}[a.direction]||a.direction;
+    let basis=(a.evidence||[]).find(x=>x.includes('特征：'));
+    if(basis)basis=basis.split('特征：').slice(1).join('特征：');
+    else basis=(row.title||row.content||'正文缺失').replace(/^【|】$/g,'').slice(0,110);
+    const sourceClauses=distinct((row.content||row.title||'').split(/[，；。！？\n]/).map(x=>x.replace(/^【|】/g,'').trim()));
+    const stockClause=ctx.name&&sourceClauses.find(x=>x.includes(ctx.name));if(stockClause)basis=stockClause.slice(0,150);
+    const clauses=sourceClauses.filter(x=>(ctx.name&&x.includes(ctx.name))||/跌|下挫|新低|走弱|上涨|涨停|走强|增长|亏损/.test(x));
+    clauses.sort((x,y)=>Number(!!ctx.name&&y.includes(ctx.name))-Number(!!ctx.name&&x.includes(ctx.name)));
+    const signals=clauses.slice(0,3).map(x=>x.length>85?x.slice(0,85)+'…':x).join('；');
+    return {industry:distinct(industries).join('、')||(macro?'多行业（资金面传导）':'正文未明确，暂不强行归类'),sector:distinct(sectors).join('、')||'未识别明确板块',direction,strength,basis,signals,paths:distinct(paths),uncertain};
+  }
   function render(){
     const range=bounds(),oldTop=ui.feed.scrollTop,expanded=new Set([...ui.feed.querySelectorAll('details[open]')].map(x=>x.closest('article').dataset.id));
     for(const [id,row]of data.rows)if(row.timestamp<range.start||row.timestamp>=range.end){data.rows.delete(id);data.cache.delete(id);}
     const ctx=context(),key=JSON.stringify(ctx),rows=[...data.rows.values()].map(row=>({row,a:analysis(row,ctx,key)}));
     const latest=(x,y)=>y.row.timestamp-x.row.timestamp||y.row.id-x.row.id;
-    rows.sort((x,y)=>ui.sort.value==='latest'?latest(x,y):Number(y.a.pin)-Number(x.a.pin)||latest(x,y));
+    const rank={stock:0,major:1,other:2};
+    rows.sort((x,y)=>ui.sort.value==='latest'?latest(x,y):rank[pinKind(x.a,ctx)]-rank[pinKind(y.a,ctx)]||latest(x,y));
+    const stockPins=rows.filter(x=>pinKind(x.a,ctx)==='stock').length,majorPins=rows.filter(x=>pinKind(x.a,ctx)==='major').length;
+    const totalPins=stockPins+majorPins;ui.pins.replaceChildren(textNode('strong','置顶共 '+totalPins+' 条 · 个股关联 '+stockPins+' 条 · 市场 / 行业重大 '+majorPins+' 条'),textNode('span',(ctx.code?'先看 '+ctx.name+' 关联 '+stockPins+' 条，再看其他重大 '+majorPins+' 条；同一消息只计入一个类别。':'未选股票：只置顶市场 / 行业重大消息，不做个股关联。')+(ui.sort.value==='latest'?' 当前切换为全部时间排序，分类标记与计数仍保留。':' 各类别内最新消息在前。')+' 数量随补齐、刷新和选股更新。'));
     ui.context.textContent=ctx.code?'关联股票：'+ctx.name+'（'+ctx.code+'） · '+(ctx.industry.length?'行业：'+ctx.industry.join(' / '):'行业尚未取得')+' · 已取得 '+ctx.tags.length+' 个标签；更换股票后自动重评。':'未选择股票：仍分析全部电报，并独立识别大盘 / 行业重点；选股后再叠加关联判断。';
     const fragment=document.createDocumentFragment();let group='';
     for(const {row,a}of rows){
-      const nextGroup=a.pin?'置顶关注':'其他电报';
-      if(ui.sort.value!=='latest'&&group!==nextGroup){group=nextGroup;fragment.append(textNode('h3',group+' · 最新在前','cls-group'));}
-      const item=document.createElement('article');item.className='cls-item'+(row.important?' cls-important':'')+(a.pin?' cls-pinned':'');item.dataset.id=String(row.id);
+      const kind=pinKind(a,ctx),impact=impactSummary(row,a,ctx);
+      const nextGroup=kind==='stock'?'① 当前股票关联置顶 · '+stockPins+' 条':kind==='major'?(ctx.code?'② 其他':'① ')+'市场 / 行业重大置顶 · '+majorPins+' 条':'其他电报';
+      if(ui.sort.value!=='latest'&&group!==nextGroup){group=nextGroup;const heading=textNode('h3',group+' · 最新在前','cls-group');heading.dataset.group=kind;fragment.append(heading);}
+      const item=document.createElement('article');item.className='cls-item'+(row.important?' cls-important':'')+(a.pin?' cls-pinned':'')+(kind==='stock'?' cls-stock-pin':'');item.dataset.id=String(row.id);item.dataset.pinKind=kind;
       const time=textNode('time',new Date((row.timestamp+8*3600)*1000).toISOString().slice(0,19).replace('T',' ')+' 北京时间');time.dateTime=row.time;item.append(time);
       const badges=document.createElement('div');badges.className='cls-badges';
-      for(const t of [a.pin?'自动置顶':'不置顶','关注分 '+a.score+'/100',a.scope,a.direction])badges.append(textNode('span',t,'tag'));
+      for(const t of [kind==='stock'?'个股关联置顶':kind==='major'?'市场 / 行业重大置顶':'不置顶','关注分 '+a.score+'/100',a.scope,impact.direction])badges.append(textNode('span',t,'tag'));
       item.append(badges);const heading=document.createElement('h3'),link=textNode('a',row.title||row.content.slice(0,75)||(row.content?'':'源站未提供标题及正文'));
       link.href='https://www.cls.cn/detail/'+row.id;link.target='_blank';link.rel='noopener noreferrer';heading.append(link);item.append(heading);
       item.append(textNode('p',row.content||'源站未提供可用电报正文；仅能依据已取得的标题做有限筛选，请查看官方原文。'));
       item.append(textNode('div',(a.pin?'置顶原因：'+a.pinReasons.join('；'):'暂不置顶：未达到市场 / 行业高关注条件，或未命中当前股票关联。'),'cls-reason'));
-      const details=document.createElement('details');details.open=expanded.has(String(row.id));details.append(textNode('summary','查看逻辑、评分依据与局限（规则研判）'));
+      const box=document.createElement('section');box.className='cls-impact';box.setAttribute('aria-label','直接可见的影响分析');
+      for(const [label,value]of [['影响行业',impact.industry],['影响板块',impact.sector],['方向 / 强弱',impact.direction+' · '+impact.strength],['消息关键点',impact.basis],['与当前股票的关系',a.matched?.length?a.matched.join('；'):ctx.code?'未识别直接或行业标签关联':'未选择股票，不推断个股关联']]){const line=document.createElement('p');line.append(textNode('strong',label+'：'),document.createTextNode(value));box.append(line);}
+      if(impact.signals){const line=document.createElement('p');line.append(textNode('strong','原文走势 / 经营线索：'),document.createTextNode(impact.signals+'（原文事实，不是后续价格预测）'));box.append(line);}
+      for(const path of impact.paths){const line=document.createElement('p');line.append(textNode('strong','影响路径：'),document.createTextNode(path));box.append(line);}
+      box.append(textNode('p','方向沿用本地规则，可能漏判；中性不代表无影响，原文走势须分对象看。强弱表示事件关注程度，不是股价幅度或涨跌概率。'+(impact.uncertain?' 含不确定或否定措辞，需核对原文，不能当作已落地。':''),'cls-limits'));item.append(box);
+      const details=document.createElement('details');details.open=expanded.has(String(row.id));details.append(textNode('summary','查看评分明细、原文命中与规则局限'));
       const list=document.createElement('ul');for(const l of a.logic||[])list.append(textNode('li',l));
       for(const c of a.components||[])list.append(textNode('li',typeof c==='string'?c:c.name+'：'+(c.points>0?'+':'')+c.points+' 分'));
       if(a.matched?.length)list.append(textNode('li','关联命中：'+a.matched.join('；')));
@@ -284,7 +357,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = CLSAnalyze
     }
     if(!rows.length)fragment.append(textNode('p',data.loaded?'所选日期暂无源站可返回的电报，或已超出官方保留范围。':'正在读取最新一批电报…','empty'));
     ui.feed.replaceChildren(fragment);ui.feed.scrollTop=oldTop;
-    ui.count.textContent='已分析 '+rows.length+' 条 · 置顶 '+rows.filter(x=>x.a.pin).length+' 条'+(data.newCount?' · 本轮新增 '+data.newCount+' 条':'');status();
+    ui.count.textContent='已分析 '+rows.length+' 条 · 置顶 '+totalPins+' 条（个股关联 '+stockPins+' / 市场行业重大 '+majorPins+'）'+(data.newCount?' · 本轮新增 '+data.newCount+' 条':'');status();
   }
   async function request(cursor,generation){
     const url=new URL(API);const mode=data.date;if(mode)url.searchParams.set('date',mode);if(cursor!==null)url.searchParams.set('cursor',String(cursor));
