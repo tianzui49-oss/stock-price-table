@@ -675,7 +675,8 @@ function tickCountRows(rawRows=[]){
 }
 function tickRender(data){
   const {rows,counts}=tickCountRows(data.rows||[]),signature=JSON.stringify(rows.map(tickRowFingerprint));
-  if(tickState.signature===signature&&!$('thsdkTableWrap').hidden)return false;
+  // 每次明细刷新均重算统计；相同数据只跳过表格重建，不跳过统计刷新。
+  if(tickState.signature===signature&&!$('thsdkTableWrap').hidden){tickRenderRowStats(rows,counts);return false;}
   const wrap=$('thsdkTableWrap'),body=$('thsdkTickBody'),oldTop=wrap.scrollTop;
   let anchor=null;
   if(!wrap.hidden&&oldTop>1){const visibleTop=oldTop+$('thsdkTickHead').offsetHeight,index=[...body.children].findIndex(tr=>tr.offsetTop+tr.offsetHeight>visibleTop);if(index>=0&&tickState.viewRows[index]){const key=tickRowFingerprint(tickState.viewRows[index]);anchor={key,occurrence:tickState.viewRows.slice(0,index+1).filter(r=>tickRowFingerprint(r)===key).length,offset:oldTop-body.children[index].offsetTop};}}
