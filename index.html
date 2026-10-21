@@ -734,7 +734,22 @@ function depthShow(note=''){
   else{depthRender();$('thsdkDepthStatus').textContent='暂无可用五档。'+note;}
 }
 function depthStop(){depthState.manual=false;depthState.generation++;depthState.controller?.abort();depthState.controller=null;}
-function depthReset(){depthStop();depthState.lastCode='';depthState.renderedCode='';depthState.renderedSignature='';// Browser-only recorder. No independent poller or background service.
+function depthReset(){depthStop();depthState.lastCode='';depthState.renderedCode='';depthState.renderedSignature='';depthRender();$('depthReadOnce').disabled=true;$('thsdkDepthStatus').textContent='查询后显示最新可用五档。';}
+function depthSync(force=false,manual=false){
+  if(!/^\d{6}$/.test(state.code))return;
+  if(depthSelected()){if(depthState.controller)depthStop();depthShow();return;}
+  if(!manual&&!marketPhase().open){if(depthState.controller&&!depthState.manual)depthStop();depthShow();return;}
+  if(depthState.controller)return;if(!force&&!manual&&depthState.lastCode===state.code){depthShow();return;}
+  const code=state.code,generation=depthState.generation,controller=new AbortController();depthState.controller=controller;depthState.manual=manual;depthState.lastCode=code;const timeout=setTimeout(()=>controller.abort(),18000);depthShow('正在读取…');
+  fetch(THSDK_TICK_API.replace('/api/ticks','/api/depth')+'?code='+code,{cache:'no-store',credentials:'omit',signal:controller.signal}).then(async response=>{
+    const data=await response.json();if(!response.ok||data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('unavailable');if(generation!==depthState.generation||code!==state.code)return;
+    if(!data.rows.some(r=>r.price!==null&&Number.isFinite(Number(r.price))&&Number(r.price)>0)){depthShow('本次无有效报价，保留已读取数据。');return;}
+    bookRecorder.capture('depth',data);
+    const previous=depthRecord(code),same=previous&&JSON.stringify(previous.rows)===JSON.stringify(data.rows),record=same?{...previous,checked_at:data.fetched_at}:{source:data.source,code,rows:data.rows,fetched_at:data.fetched_at,checked_at:data.fetched_at};
+    depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
+  }).catch(()=>{if(generation===depthState.generation&&code===state.code)depthShow('读取失败，请稍后重试。');}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}depthShow();});
+}
+// Browser-only recorder. No independent poller or background service.
 const bookRecorder=(()=>{
   let dbPromise,queue=Promise.resolve(),enabled=true,lastError='',recent=[];
   const last=new Map(),knownTicks=new Map();
@@ -759,21 +774,6 @@ const bookRecorder=(()=>{
   return {capture,refresh,compare};
 })();
 
-depthRender();$('depthReadOnce').disabled=true;$('thsdkDepthStatus').textContent='查询后显示最新可用五档。';}
-function depthSync(force=false,manual=false){
-  if(!/^\d{6}$/.test(state.code))return;
-  if(depthSelected()){if(depthState.controller)depthStop();depthShow();return;}
-  if(!manual&&!marketPhase().open){if(depthState.controller&&!depthState.manual)depthStop();depthShow();return;}
-  if(depthState.controller)return;if(!force&&!manual&&depthState.lastCode===state.code){depthShow();return;}
-  const code=state.code,generation=depthState.generation,controller=new AbortController();depthState.controller=controller;depthState.manual=manual;depthState.lastCode=code;const timeout=setTimeout(()=>controller.abort(),18000);depthShow('正在读取…');
-  fetch(THSDK_TICK_API.replace('/api/ticks','/api/depth')+'?code='+code,{cache:'no-store',credentials:'omit',signal:controller.signal}).then(async response=>{
-    const data=await response.json();if(!response.ok||data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('unavailable');if(generation!==depthState.generation||code!==state.code)return;
-    if(!data.rows.some(r=>r.price!==null&&Number.isFinite(Number(r.price))&&Number(r.price)>0)){depthShow('本次无有效报价，保留已读取数据。');return;}
-    bookRecorder.capture('depth',data);
-    const previous=depthRecord(code),same=previous&&JSON.stringify(previous.rows)===JSON.stringify(data.rows),record=same?{...previous,checked_at:data.fetched_at}:{source:data.source,code,rows:data.rows,fetched_at:data.fetched_at,checked_at:data.fetched_at};
-    depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
-  }).catch(()=>{if(generation===depthState.generation&&code===state.code)depthShow('读取失败，请稍后重试。');}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}depthShow();});
-}
 depthRender();$('depthReadOnce').disabled=true;$('depthReadOnce').addEventListener('click',()=>depthSync(true,true));
 $('tickLatestBtn').addEventListener('click',()=>{if(state.chartDate!==dayShanghai()){ $('chartDate').value=dayShanghai();void loadSelectedChartDay().then(()=>{clearChartSelection();tickSync(true,true);});}else{clearChartSelection();tickSync(true,true);}});
 
