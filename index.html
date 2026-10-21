@@ -78,6 +78,113 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
       <p class="hint">新闻关键词分类不是事实结论。涉及监管、诉讼、业绩等事项，请以公司正式公告和监管披露为准。</p>
     </section>
   </section>
+<!-- CLS telegraph: isolated addition; existing page modules are unchanged. -->
+<style>
+#clsTelegraph .cls-tools{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px}
+#clsTelegraph .cls-date{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+#clsTelegraph input[type=date]{height:42px;max-width:100%;border:1px solid #cfd8e5;border-radius:8px;padding:0 10px;background:white;color:var(--ink);font:inherit}
+#clsTelegraph .cls-auto{display:flex;align-items:center;gap:6px;min-height:42px;font-size:13px;color:var(--muted)}
+#clsTelegraph .cls-feed{max-height:640px;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--line);margin-top:12px}
+#clsTelegraph .cls-item{padding:14px 2px;border-bottom:1px solid var(--line)}
+#clsTelegraph .cls-item time{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-variant-numeric:tabular-nums}
+#clsTelegraph .cls-item h3{font-size:15px;margin:0 0 6px;line-height:1.6}
+#clsTelegraph .cls-item a{color:#1768b2;text-decoration:none;overflow-wrap:anywhere}
+#clsTelegraph .cls-item a:hover{text-decoration:underline}
+#clsTelegraph .cls-item p{font-size:14px;line-height:1.8;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+#clsTelegraph .cls-important h3 a{color:#b33b35}
+#clsTelegraph .cls-status{font-size:13px;color:var(--muted);margin:8px 0;min-height:22px}
+#clsTelegraph .cls-status.error{color:#a33}
+#clsTelegraph button:disabled{opacity:.55;cursor:not-allowed}
+#clsTelegraph .cls-bottom{margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+@media(max-width:520px){#clsTelegraph .cls-tools{gap:8px}#clsTelegraph button{padding:0 11px}#clsTelegraph .cls-feed{max-height:560px}}
+</style>
+<section class="card" id="clsTelegraph" aria-labelledby="clsTitle">
+  <div class="section-head" style="flex-wrap:wrap"><h2 id="clsTitle">财联社 · 新闻电报</h2><a class="small" href="https://www.cls.cn/telegraph" target="_blank" rel="noopener noreferrer">财联社官方原文</a></div>
+  <div class="cls-tools">
+    <label class="cls-date" for="clsDate">查看日期（北京时间）<input id="clsDate" type="date" aria-describedby="clsHelp"></label>
+    <button class="secondary" id="clsRecent" type="button">最近三天</button>
+    <button class="secondary" id="clsRefresh" type="button">刷新电报</button>
+    <label class="cls-auto"><input id="clsAuto" type="checkbox" checked> 每 30 秒更新</label>
+  </div>
+  <p class="hint" id="clsHelp">独立展示全市场电报，不跟随上方股票筛选。默认最近三天（今天及前两天）；可选择其他日期，历史数据以官方接口可返回范围为准。每批加载 20 条，点击下方按钮继续查看。</p>
+  <p class="cls-status" id="clsStatus" role="status" aria-live="polite">正在读取财联社官方电报…</p>
+  <div class="cls-feed" id="clsFeed" aria-label="财联社电报列表"></div>
+  <div class="cls-bottom"><button class="secondary" id="clsMore" type="button" disabled>加载更早电报</button><span class="small" id="clsCount"></span></div>
+  <p class="hint">来源：财联社官方电报接口，经独立只读接口转发。时间均为北京时间，按发布时间倒序；更新可能受源站和网络影响，不保证零延迟。历史日期不自动轮询，切回最近三天或今天后恢复。</p>
+</section>
+<script>
+(() => {
+  'use strict';
+  const API='https://8767-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/cls-telegraph';
+  const el=id=>document.getElementById(id);
+  const ui={date:el('clsDate'),recent:el('clsRecent'),refresh:el('clsRefresh'),auto:el('clsAuto'),status:el('clsStatus'),feed:el('clsFeed'),more:el('clsMore'),count:el('clsCount')};
+  const data={date:'',rows:new Map(),cursor:null,generation:0,busy:false,controller:null,today:'',loaded:false};
+  const chinaDate=(millis=Date.now())=>new Date(millis+8*3600000).toISOString().slice(0,10);
+  function bounds(){const today=chinaDate();const start=Date.parse((data.date||chinaDate(Date.now()-2*86400000))+'T00:00:00+08:00')/1000;return {start,end:data.date?start+86400:Date.now()/1000+1,today};}
+  function plain(value){const doc=new DOMParser().parseFromString(String(value).replace(/<br\s*\/?\s*>/gi,'\n'), 'text/html');return (doc.body.textContent||'').trim();}
+  function label(){return data.date||'最近三天';}
+  function buttons(){ui.more.disabled=data.busy||data.cursor===null;ui.refresh.disabled=data.busy;ui.more.textContent=data.busy?'正在加载…':data.cursor===null?'已到所选范围末尾':'加载更早电报';}
+  function render(){
+    const range=bounds(),oldTop=ui.feed.scrollTop;
+    for(const [id,row] of data.rows)if(row.timestamp<range.start||row.timestamp>=range.end)data.rows.delete(id);
+    const fragment=document.createDocumentFragment();
+    const rows=[...data.rows.values()].sort((a,b)=>b.timestamp-a.timestamp||b.id-a.id);
+    for(const row of rows){
+      const item=document.createElement('article');item.className='cls-item'+(row.important?' cls-important':'');item.dataset.id=String(row.id);
+      const time=document.createElement('time');time.dateTime=row.time;time.textContent=new Date((row.timestamp+8*3600)*1000).toISOString().slice(0,19).replace('T',' ')+' 北京时间';item.append(time);
+      const title=plain(row.title),content=plain(row.content);
+      const heading=document.createElement('h3'),link=document.createElement('a');link.href='https://www.cls.cn/detail/'+row.id;link.target='_blank';link.rel='noopener noreferrer';link.textContent=title||content.slice(0,75)+(content.length>75?'…':'');heading.append(link);item.append(heading);
+      const body=document.createElement('p');body.textContent=content;item.append(body);fragment.append(item);
+    }
+    if(!rows.length){const empty=document.createElement('p');empty.className='empty';empty.textContent='所选日期暂无可显示的电报；也可能已超出官方接口保留范围。';fragment.append(empty);}
+    ui.feed.replaceChildren(fragment);ui.feed.scrollTop=oldTop;
+    ui.count.textContent=label()+' · 已加载 '+rows.length+' 条';
+  }
+  async function load(kind='refresh'){
+    if(data.busy)return;
+    const generation=data.generation,mode=data.date,isMore=kind==='more',cursor=data.cursor;
+    if(isMore&&cursor===null)return;
+    data.busy=true;buttons();ui.status.classList.remove('error');
+    ui.status.textContent=(isMore?'正在加载更早电报':'正在读取官方最新电报')+' · '+label();
+    const controller=new AbortController();data.controller=controller;const timer=setTimeout(()=>controller.abort(),20000);
+    try{
+      const url=new URL(API);if(mode)url.searchParams.set('date',mode);if(isMore)url.searchParams.set('cursor',String(cursor));
+      const response=await fetch(url,{signal:controller.signal,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer'});
+      if(!response.ok)throw Error('服务暂不可用');const result=await response.json();
+      if(generation!==data.generation)return;
+      if(result.source!=='财联社'||!Array.isArray(result.items)||(result.date||'')!==mode)throw Error('数据格式异常');
+      const range=bounds();
+      for(const row of result.items)if(Number.isSafeInteger(row.id)&&Number.isFinite(row.timestamp)&&row.timestamp>=range.start&&row.timestamp<range.end)data.rows.set(row.id,row);
+      // A latest refresh must never reset the older-history pagination position.
+      if(isMore||!data.loaded)data.cursor=Number.isSafeInteger(result.next_cursor)?result.next_cursor:null;data.loaded=true;
+      render();
+      const stamp=new Date(result.fetched_at);const text=Number.isFinite(stamp.getTime())?new Date(stamp.getTime()+8*3600000).toISOString().slice(11,19):'刚刚';
+      const live=!mode||mode===range.today;
+      ui.status.textContent=label()+' · 官方数据读取于 '+text+'（北京时间）'+(live&&ui.auto.checked?' · 每 30 秒更新':live?' · 自动更新已关闭':' · 历史日期，仅手动刷新');
+    }catch(error){
+      if(generation!==data.generation)return;
+      ui.status.classList.add('error');ui.status.textContent='财联社电报暂未更新'+(data.rows.size?'，保留上次已加载内容':'')+'。请稍后点“刷新电报”重试，或查看官方原文。';
+    }finally{clearTimeout(timer);if(generation===data.generation){data.busy=false;data.controller=null;buttons();}}
+  }
+  function choose(date){
+    if(date&&(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date>chinaDate())){ui.date.value=data.date;ui.status.textContent='请选择今天或更早的日期。';return;}
+    data.controller?.abort();data.generation++;data.busy=false;data.controller=null;data.date=date;data.rows.clear();data.cursor=null;data.loaded=false;ui.date.value=date;ui.feed.replaceChildren();ui.feed.scrollTop=0;ui.count.textContent='';load();
+  }
+  ui.date.max=chinaDate();data.today=chinaDate();
+  ui.date.addEventListener('change',()=>choose(ui.date.value));ui.recent.addEventListener('click',()=>choose(''));
+  ui.refresh.addEventListener('click',()=>load());ui.more.addEventListener('click',()=>load('more'));
+  ui.auto.addEventListener('change',()=>{if(ui.auto.checked&&(!data.date||data.date===chinaDate()))load();else ui.status.textContent+=ui.auto.checked?' · 历史日期不自动更新':' · 自动更新已关闭';});
+  function tick(){
+    const today=chinaDate();ui.date.max=today;
+    if(today!==data.today){data.today=today;if(!data.date){choose('');return;}}
+    if(!document.hidden&&ui.auto.checked&&(!data.date||data.date===today))load();
+  }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick();});
+  setInterval(tick,30000);load();
+})();
+</script>
+<!-- End isolated CLS telegraph module. -->
+
   <div class="footer">浏览器需要联网访问腾讯行情和东方财富公开接口。第三方接口策略变化、网络或浏览器安全设置可能导致部分数据暂时不可用。</div>
 </main>
 <script>
