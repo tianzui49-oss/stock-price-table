@@ -47,7 +47,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
 <section id="result" hidden>
     <section class="card">
       <div class="section-head"><div><h2 class="stock-title" id="stockTitle">—</h2><div class="small" id="tradeDate"></div><div class="small" style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px 14px"><span id="stockIndustry">所属行业：待查询</span><span id="stockFloatCap" title="腾讯最新行情流通市值；切换历史走势时不表示历史市值">流通市值：待查询</span></div><div class="small" id="stockTags" style="margin-top:5px;line-height:2">板块 / 标签：待查询</div></div><div style="display:flex;align-items:center;gap:9px"><label class="small" for="chartDate">走势日期</label><input id="chartDate" type="date" style="height:36px;border:1px solid #cfd8e5;border-radius:7px;padding:0 8px"><span class="small" id="quoteTime"></span></div></div>
-      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestZeroLine" class="change" title="零线价格＝累计成交额（元）÷累计成交量（股）；该价格使累计量×价−累计成交额为零">零线：—</span><span id="chartOpen" class="change" title="所选走势日期的开盘价，不随选中时刻改变">开盘价：—</span><span id="chartPrevClose" class="change" title="所选走势日期前一个交易日的收盘价，不随选中时刻改变">昨收价：—</span><span id="latestAmount" class="change">成交额：—</span></div>
+      <div class="price-top"><strong id="latestPrice">—</strong><span id="latestChange" class="change">—</span><span id="latestGap" class="change" title="（累计成交量×所选价格−累计成交额）÷累计成交额">差：—</span><span id="latestZeroLine" class="change" title="零线价格＝累计成交额（元）÷累计成交量（股）；该价格使累计量×价−累计成交额为零">零线：—</span><span id="chartOpen" class="change" title="所选走势日期的开盘价，不随选中时刻改变">开盘价：—</span><span id="chartPrevClose" class="change" title="所选走势日期前一个交易日的收盘价，不随选中时刻改变">昨收价：—</span><span id="latestAmount" class="change">成交额：—</span><span id="latestVolumeRatio" class="change" title="量比＝截至所选时刻累计成交量÷已交易分钟÷（此前5个交易日总成交量÷1200）；午休不计时，跟随分时选点。">量比：—</span></div>
       <svg id="chart" viewBox="0 0 1000 420" role="img" aria-label="当日实时价格走势图"></svg>
       <div id="chartPointInfo" aria-live="polite">轻点固定所选时刻，再点同一位置取消，点其他位置切换；滑动查看后松手恢复最新值。</div>
       <div class="chart-note" id="chartInfo">近期日期显示历史分钟线；当前交易日会用历史分钟线补齐开盘以来的曲线，并叠加页面实时采样。超过数据源保留范围的分时历史无法补取。</div>
@@ -320,7 +320,7 @@ function quoteRowLabel(q){return q.time?.slice(0,8)===dayShanghai().replaceAll('
 function currentQuoteRow(q,symbol,label=quoteRowLabel(q)){const hands=volumeToHand(q.volume_raw,symbol,q.low,q.high,q.amount_wan).hands;const calc=hands*q.current/100;return {date:q.time.slice(0,4)+'-'+q.time.slice(4,6)+'-'+q.time.slice(6,8)+label,open:q.open,close:q.current,high:q.high,low:q.low,volume_hand:hands,amount_wan:q.amount_wan,range:`${q.low.toFixed(2)}–${q.high.toFixed(2)}`,volatility:q.high-q.low,change_pct:q.change_pct,calc_wan:calc,diff_pct:q.amount_wan?(calc-q.amount_wan)/q.amount_wan*100:0};}
 function emSecid(symbol){if(symbol.startsWith('sh'))return `1.${symbol.slice(2)}`;if(symbol.startsWith('sz'))return `0.${symbol.slice(2)}`;throw new Error('该交易所暂不支持历史分钟曲线');}
 // 使用接口原生脚本响应，避免 file:// 或跨设备浏览器的跨域 fetch 限制。
-async function fetchMinuteBars(symbol,period,beg,end){const u=new URL(EM_MINUTE_API);for(const [k,v]of Object.entries({secid:emSecid(symbol),klt:period,fqt:'0',beg,end,lmt:'5000',fields1:'f1,f2,f3,f4,f5,f6',fields2:'f51,f52,f53,f54,f55,f56,f57,f58'}))u.searchParams.set(k,v);const json=await jsonp(u.toString(),'cb',10000);if(json?.rc!==0||!Array.isArray(json?.data?.klines))throw new Error('分钟线接口未返回可用数据');return json.data.klines.map(line=>{const f=line.split(','),volume=Number(f[5]),amount=Number(f[6]);return {time:f[0],price:Number(f[2]),volume_hand:Number.isFinite(volume)?volume:null,amount:Number.isFinite(amount)?amount:null};}).filter(p=>p.time&&Number.isFinite(p.price)&&p.price>0);}
+async function fetchMinuteBars(symbol,period,beg,end){const u=new URL(EM_MINUTE_API);for(const [k,v]of Object.entries({secid:emSecid(symbol),klt:period,fqt:'0',beg,end,lmt:'5000',fields1:'f1,f2,f3,f4,f5,f6',fields2:'f51,f52,f53,f54,f55,f56,f57,f58'}))u.searchParams.set(k,v);const json=await jsonp(u.toString(),'cb',10000);if(json?.rc!==0||!Array.isArray(json?.data?.klines))throw new Error('分钟线接口未返回可用数据');return json.data.klines.map(line=>{const f=line.split(','),volume=Number(f[5]),amount=Number(f[6]);return {time:f[0],price:Number(f[2]),volume_hand:Number.isFinite(volume)?volume:null,amount:Number.isFinite(amount)?amount:null,volume_ratio_bar:true};}).filter(p=>p.time&&Number.isFinite(p.price)&&p.price>0);}
 async function fetchTencentIntraday(symbol){
   const name='stock_minutes_'+Date.now()+'_'+Math.random().toString(36).slice(2),u=new URL('https://web.ifzq.gtimg.cn/appstock/app/day/query');u.searchParams.set('code',symbol);u.searchParams.set('_var',name);
   let payload;try{payload=await scriptValue(u.toString(),name,10000);}finally{delete window[name];}
@@ -328,7 +328,7 @@ async function fetchTencentIntraday(symbol){
   for(const day of days){if(!/^\d{8}$/.test(day.date)||!Array.isArray(day.data))continue;const date=day.date.slice(0,4)+'-'+day.date.slice(4,6)+'-'+day.date.slice(6,8);let prevVolume=0,prevAmount=0;
     const points=[];for(const line of day.data){const f=String(line).trim().split(/\s+/),clock=f[0],price=Number(f[1]),volume=f[2]===undefined?NaN:Number(f[2]),amount=f[3]===undefined?NaN:Number(f[3]);if(!/^\d{4}$/.test(clock)||!Number.isFinite(price)||price<=0)continue;
       // 腾讯分时成交量/额是累计值，转换成单分钟值供原有累计提示使用。
-      const point={time:date+' '+clock.slice(0,2)+':'+clock.slice(2,4),price,volume_hand:Number.isFinite(volume)&&volume>=prevVolume?volume-prevVolume:null,amount:Number.isFinite(amount)&&amount>=prevAmount?amount-prevAmount:null};if(Number.isFinite(volume))prevVolume=volume;if(Number.isFinite(amount))prevAmount=amount;points.push(point);
+      const point={time:date+' '+clock.slice(0,2)+':'+clock.slice(2,4),price,volume_hand:Number.isFinite(volume)&&volume>=prevVolume?volume-prevVolume:null,amount:Number.isFinite(amount)&&amount>=prevAmount?amount-prevAmount:null,cumulative_volume_hand:Number.isFinite(volume)&&volume>=prevVolume?volume/(symbol.startsWith('sh688')?100:1):null};if(Number.isFinite(volume))prevVolume=volume;if(Number.isFinite(amount))prevAmount=amount;points.push(point);
     }if(points.length)out[date]=mergePoints(points);
   }if(!Object.keys(out).length)throw new Error('腾讯未返回近期分钟数据');return out;
 }
@@ -338,9 +338,9 @@ function normalizeChartTime(value){const s=String(value||'');if(/^\d{14}$/.test(
 function loadChart(code,day){try{const d=JSON.parse(localStorage.getItem(`stock-chart-${code}-${day}`)||'[]');return Array.isArray(d)?d.map(p=>({...p,time:normalizeChartTime(p.time)})).filter(p=>p.time&&Number.isFinite(Number(p.price))&&Number(p.price)>0):[];}catch{return [];}}
 function storeChart(code,day,points){try{localStorage.setItem(`stock-chart-${code}-${day}`,JSON.stringify(points));}catch{}}
 async function ensureChartReference(day){
-  const ref=chartReference(day);if(ref.prev>0&&ref.open>0)return;
+  const ref=chartReference(day);if(ref.prev>0&&ref.open>0&&volumeRatioBaseline(day).length===5&&state.dailyHistoryRanges?.some(([start,end])=>day>=start&&day<=end&&volumeRatioBaseline(day)[0].date>=start))return;
   const symbol=state.symbol,start=new Date(new Date(day+'T00:00:00Z').getTime()-370*86400000).toISOString().slice(0,10);
-  try{const rows=await fetchHistory(symbol,start,day);if(state.symbol===symbol)for(const row of rows){if(row.prev_close>0||!state.dailyByDate[row.date])state.dailyByDate[row.date]=row;}}catch(e){console.warn('所选日期昨收价暂不可用',e);}
+  try{const rows=await fetchHistory(symbol,start,day);if(state.symbol===symbol){for(const row of rows){if(row.prev_close>0||!state.dailyByDate[row.date])state.dailyByDate[row.date]=row;}(state.dailyHistoryRanges??=[]).push([start,day]);}}catch(e){console.warn('所选日期昨收价暂不可用',e);}
 }
 async function loadSelectedChartDay(){
   const day=$('chartDate').value;if(!day||!state.code)return;tickDateBegin(day);
@@ -424,6 +424,39 @@ function updateChartPointInfo(index){
   $('chartPointInfo').textContent=parts.join(' ｜ ');
 }
 function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L-.5||px>g.W-g.R+.5)return null;return Math.max(0,Math.min(g.pts.length-1,Math.round((px-g.L)/(g.W-g.L-g.R)*(g.pts.length-1))));}
+// THS vr(5): current average volume/minute divided by the prior five sessions' average.
+// Use daily totals for the denominator: five days of minute history is not required.
+function volumeRatioBaseline(day){return Object.values(state.dailyByDate||{}).filter(r=>r.date<day).sort((a,b)=>a.date.localeCompare(b.date)).slice(-5);}
+function tradedMinutesAt(time,completedBar=false){
+  const clock=normalizeChartTime(time).split(' ')[1]||'',m=clock.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if(!m||+m[1]>23||+m[2]>59||+(m[3]||0)>59)return null;
+  const minute=+m[1]*60+(+m[2])+(+(m[3]||0))/60;
+  // Tencent labels the minute in progress (09:30 is minute 1); EM bars label interval ends.
+  const offset=completedBar?0:1,bucket=Math.floor(minute);
+  return Math.max(0,Math.min(120,bucket-570+offset))+Math.max(0,Math.min(120,bucket-780+offset));
+}
+function volumeRatioAt(time,live=false){
+  const point=state.chart.find(p=>p.time===time),day=normalizeChartTime(time).slice(0,10),sourcePoint=state.intradayByDate?.[day]?.find(p=>p.time===time)||point,minutes=tradedMinutesAt(time,!live&&!point?.isLive&&sourcePoint?.volume_ratio_bar===true),rows=volumeRatioBaseline(day);
+  if(rows.length!==5)return {value:null,reason:'缺少此前5个交易日日线成交量'};
+  if(rows.some(r=>r.volume_hand==null||!Number.isFinite(Number(r.volume_hand))||Number(r.volume_hand)<0))return {value:null,reason:'此前5日成交量不完整'};
+  const total=rows.reduce((sum,r)=>sum+Number(r.volume_hand),0);
+  if(!(total>0))return {value:null,reason:'此前5日平均成交量为零'};
+  if(!(minutes>0))return {value:null,reason:'尚无有效交易时长（09:30起计第1分钟）'};
+  let volume=null;
+  if(live||point?.isLive){
+    const q=state.quote;
+    if(live&&q&&normalizeChartTime(q.time)===normalizeChartTime(time)&&q.volume_raw!=null&&Number.isFinite(Number(q.volume_raw))&&Number(q.volume_raw)>=0)volume=Number(q.volume_raw)/(state.symbol.startsWith('sh688')?100:1);
+    else if(point?.volume_hand!=null&&Number.isFinite(Number(point.volume_hand))&&Number(point.volume_hand)>=0)volume=Number(point.volume_hand);
+  }else{
+    const bars=(state.intradayByDate?.[day]||state.chart).filter(p=>!p.isLive&&p.time<=time),last=bars.at(-1);
+    // Tencent returns cumulative volume directly (STAR market uses shares; others use lots).
+    if(last?.cumulative_volume_hand!=null&&Number.isFinite(Number(last.cumulative_volume_hand))&&Number(last.cumulative_volume_hand)>=0)volume=Number(last.cumulative_volume_hand);
+    // Eastmoney minute bars use lots. Reject incomplete/truncated series, not partial sums.
+    else if(bars.length&&/ 09:(30|35)(?::00)?$/.test(bars[0].time)&&bars.every((p,i)=>p.volume_ratio_bar===true&&p.volume_hand!=null&&Number.isFinite(Number(p.volume_hand))&&Number(p.volume_hand)>=0&&(!i||tradedMinutesAt(p.time,true)-tradedMinutesAt(bars[i-1].time,true)<=5)))volume=bars.reduce((sum,p)=>sum+Number(p.volume_hand),0);
+  }
+  if(!Number.isFinite(volume)||volume<0)return {value:null,reason:'该时刻累计成交量缺失或不完整'};
+  return {value:(volume/minutes)/(total/1200),volume,minutes,total,dates:rows.map(r=>r.date)};
+}
 function updateQuoteHeader(index){
   const reference=chartReference(state.chartDate),opening=reference.open;
   $('chartPrevClose').textContent='昨收价：'+(Number.isFinite(reference.prev)&&reference.prev>0?reference.prev.toFixed(2)+' 元':'暂未获取到');
@@ -446,6 +479,10 @@ function updateQuoteHeader(index){
   const zeroLine=$('chart').querySelector('#chartZeroLine'),zeroLabel=$('chart').querySelector('#chartZeroLineLabel'),geometry=state.chartGeometry;
   if(geometry&&Number.isFinite(zeroGapPrice)){const yy=geometry.y(zeroGapPrice);zeroLine?.setAttribute('display','');zeroLine?.setAttribute('y1',yy);zeroLine?.setAttribute('y2',yy);zeroLabel?.setAttribute('display','');zeroLabel?.setAttribute('y',Math.max(geometry.T+14,yy-7));if(zeroLabel)zeroLabel.textContent=`零线 ${zeroGapPrice.toFixed(4)}元`;}else{zeroLine?.setAttribute('display','none');zeroLabel?.setAttribute('display','none');}
   $('latestAmount').textContent=`成交额：${formatTurnover(amount)}`;
+  const ratioTime=live?q.time:p?.time,ratio=ratioTime?volumeRatioAt(live?normalizeChartTime(ratioTime):ratioTime,live):{value:null,reason:'该日期无可用分时点'};
+  $('latestVolumeRatio').textContent=Number.isFinite(ratio.value)?`量比：${ratio.value.toFixed(2)}`:`量比：—（${ratio.reason}）`;
+  $('latestVolumeRatio').title=Number.isFinite(ratio.value)?`${normalizeChartTime(ratioTime)}｜累计 ${ratio.volume} 手 ÷ 已交易 ${Number(ratio.minutes.toFixed(4))} 分钟 ÷（前5日共 ${ratio.total} 手 ÷ 1200 分钟）；基准日期：${ratio.dates.join('、')}。口径：同花顺 vr(5)，行情源为腾讯/东方财富；午休不计时；腾讯分时当前分钟计1分钟（09:30为第1分钟），东方财富K线按结束时刻计时。`:'量比＝截至所选时刻累计成交量÷已交易分钟÷（此前5个交易日总成交量÷1200）；'+ratio.reason;
+
   const gap=Number.isFinite(price)&&Number.isFinite(amount)&&amount>0&&Number.isFinite(volume)&&volume>0?volume*price*100-amount:null;
   $('latestGap').textContent=gap===null?'差：—（缺少累计量额）':`差：${pct(gap/amount*100,2)}（${signedTurnover(gap)}）`;
   $('latestGap').className='change '+(gap>0?'up':gap<0?'down':'');
@@ -495,7 +532,7 @@ async function runQuery(event){
     const now=dayShanghai(),from=$('start').value,to=$('end').value;
     const start=from||new Date(Date.now()-120*86400000).toISOString().slice(0,10),end=to||now;
     const calcStart=new Date(new Date(start+'T00:00:00').getTime()-20*86400000).toISOString().slice(0,10);
-    const hist=await fetchHistory(symbol,calcStart,end),filtered=hist.filter(r=>r.date>=start),hasTodayQuote=!!(q&&q.time.slice(0,8)===now.replaceAll('-',''));state.dailyByDate=Object.fromEntries(hist.map(r=>[r.date,r]));
+    const hist=await fetchHistory(symbol,calcStart,end),filtered=hist.filter(r=>r.date>=start),hasTodayQuote=!!(q&&q.time.slice(0,8)===now.replaceAll('-',''));state.dailyByDate=Object.fromEntries(hist.map(r=>[r.date,r]));state.dailyHistoryRanges=[[calcStart,end]];
     try{state.intradayByDate=await fetchRecentIntraday(symbol);}catch(e){console.warn('近期历史分钟线暂不可用',e);minuteError=e.message;state.intradayByDate={};}
     if(!from&&!to){
       const completed=filtered.filter(r=>r.date<now);
