@@ -790,10 +790,10 @@ const BookFlowCalculator = (() => {
       if(!prev){prev={e,snap,phase:ph};continue;}
       const lim=Math.max(5000,num(e.gap_limit_ms||5000)), gap=e.__t-prev.e.__t, contiguous=e.segment_id===prev.e.segment_id&&prev.phase===ph&&gap>0&&gap<=lim&&!e.gap_warning&&inHours&&!!prev.phase;
       if(!contiguous){excluded.push({start:iso(prev.e.__t),end:iso(e.__t),reason:e.gap_warning?'gap_warning':e.segment_id!==prev.e.segment_id?'segment_boundary':prev.phase!==ph?'phase_boundary':!inHours?'outside_session':'gap',__at:e.__t});prev={e,snap,phase:ph};continue;}
-      const bySide={bid:[],ask:[]}; for(const side of ['bid','ask']) {const old=new Map(prev.snap.a[side].map(x=>[x.price,x.shares])), cur=new Map(snap.a[side].map(x=>[x.price,x.shares])); for(const [p,v] of old){if(!cur.has(p)){boundaryLog.push({at:e.__t,side,shares:v});continue;}if(cur.get(p)<v)bySide[side].push({side,price:p,reduction:v-cur.get(p),t0:prev.e.__t,t1:e.__t});}for(const [p,v] of cur)if(!old.has(p))boundaryLog.push({at:e.__t,side,shares:v});}
+      const bySide={bid:[],ask:[]}; for(const side of ['bid','ask']) {const old=new Map(prev.snap.a[side].map(x=>[x.price,x.shares])), cur=new Map(snap.a[side].map(x=>[x.price,x.shares])); for(const [p,v] of old){if(!cur.has(p)){boundaryLog.push({at:e.__t,side,shares:v});continue;}if(cur.get(p)<v)bySide[side].push({side,price:p,reduction:v-cur.get(p),before_shares:v,after_shares:cur.get(p),t0:prev.e.__t,t1:e.__t});}for(const [p,v] of cur)if(!old.has(p))boundaryLog.push({at:e.__t,side,shares:v});}
       candidates.push({start:prev.e.__t,end:e.__t,bySide,done:false});prev={e,snap,phase:ph};
     }
-    const timeline=[]; let cumulative={bid:empty(),ask:empty()}, through=0,confirmedCount=0;
+    const timeline=[]; const reconciliation=[]; let cumulative={bid:empty(),ask:empty()}, through=0,confirmedCount=0;
     const reductionsByPrice=new Map();for(const c of candidates)for(const x of [...c.bySide.bid,...c.bySide.ask]){if(!reductionsByPrice.has(x.price))reductionsByPrice.set(x.price,[]);reductionsByPrice.get(x.price).push(x);}
     const add=(o,x,credit,unknown)=>{o.reduction_shares+=Math.max(0,x-unknown); o.trade_credit_shares+=credit; o.unknown_shares+=unknown; o.unexplained_shares+=Math.max(0,x-credit-unknown);};
     let readyIndex=0,waiting=[];for(const r of responses){while(readyIndex<candidates.length&&r.__t>=candidates[readyIndex].end+10000)waiting.push(candidates[readyIndex++]);const eligible=[],remaining=[];for(const c of waiting){if(coverage(r,c.start,c.end,day||dayOf(c.end)))eligible.push(c);else remaining.push(c);}waiting=remaining;if(!eligible.length)continue; const items=[]; for(const c of eligible)for(const side of ['bid','ask'])for(const x of c.bySide[side])items.push({...x,c});
@@ -805,13 +805,14 @@ const BookFlowCalculator = (() => {
       }
       for(const t of reserved)t.__used=Math.max(t.__used,num(t.row.volume));
       const intervalMetrics=new Map(eligible.map(c=>[c,{bid:empty(),ask:empty()}]));
-      const out={bid:empty(),ask:empty()};for(const x of items){let credit=0,unknown=0;if(conflicted.has(x)){unknown=x.reduction;}else{for(const t of matches.get(x)){const avail=Math.max(0,num(t.row.volume)-t.__used),take=Math.min(x.reduction-credit,avail);if(take>0){credit+=take;t.__used+=take;}if(credit>=x.reduction)break;}}add(out[x.side],x.reduction,credit,unknown);add(intervalMetrics.get(x.c)[x.side],x.reduction,credit,unknown);}
+      const allocations=new Map(); const out={bid:empty(),ask:empty()};for(const x of items){let credit=0,unknown=0,allocated=[];if(conflicted.has(x)){unknown=x.reduction;}else{for(const t of matches.get(x)){const avail=Math.max(0,num(t.row.volume)-t.__used),take=Math.min(x.reduction-credit,avail);if(take>0){credit+=take;t.__used+=take;allocated.push({tick_id:String(t.id??t.tick_id??t.__i),first_received_at:t.first_received_at,trade_time:num(t.row.time),price:num(t.row.price),source_volume_shares:num(t.row.volume),allocated_shares:take,row:t.row});}if(credit>=x.reduction)break;}}allocations.set(x,{credit,unknown,allocated});add(out[x.side],x.reduction,credit,unknown);add(intervalMetrics.get(x.c)[x.side],x.reduction,credit,unknown);}
+      for(const x of items){const a=allocations.get(x), unexplained=Math.max(0,x.reduction-a.credit-a.unknown); reconciliation.push({id:`${String(sid)}:${x.c.start}:${x.c.end}:${x.side}:${String(x.price)}`,session_id:sid,side:x.side,price:x.price,interval_start:iso(x.c.start),interval_end:iso(x.c.end),confirmed_at:iso(r.__t),before_shares:x.before_shares,after_shares:x.after_shares,reduction_shares:x.reduction,trade_credit_shares:a.credit,unexplained_shares:unexplained,unknown_shares:a.unknown,status:a.unknown?'ambiguous':a.credit===x.reduction?'quantity_matched':a.credit?'partially_matched':'unmatched',matches:a.unknown?[]:a.allocated});}
       for(const side of ['bid','ask']){out[side].rate_pct=out[side].reduction_shares?out[side].unexplained_shares/out[side].reduction_shares*100:null;for(const k of ['reduction_shares','trade_credit_shares','unexplained_shares','unknown_shares'])cumulative[side][k]+=out[side][k];cumulative[side].rate_pct=cumulative[side].reduction_shares?cumulative[side].unexplained_shares/cumulative[side].reduction_shares*100:null;}
       const latest=eligible[eligible.length-1];const latestMetrics=intervalMetrics.get(latest);for(const side of ['bid','ask']){const m=latestMetrics[side];m.rate_pct=m.reduction_shares?m.unexplained_shares/m.reduction_shares*100:null;}confirmedCount+=eligible.length;through=Math.max(through,...eligible.map(c=>c.end)); eligible.forEach(c=>c.done=true); const visible={bid:0,ask:0};for(const b of boundaryLog)if(b.at<=r.__t)visible[b.side]+=b.shares;
       timeline.push({at:iso(r.__t),through:iso(through),bid:{...cumulative.bid},ask:{...cumulative.ask},instant:{start:iso(latest.start),end:iso(latest.end),bid:latestMetrics.bid,ask:latestMetrics.ask},confirmed_intervals:confirmedCount,confirmed_interval_details:eligible.map(c=>({start:iso(c.start),end:iso(c.end)})),excluded_intervals:excluded.filter(x=>x.__at<=r.__t).length,excluded_interval_details:excluded.filter(x=>x.__at<=r.__t).map(({__at,...x})=>x),boundary_shares:visible});
     }
     const pendingDetails=candidates.filter(c=>!c.done).map(c=>({start:iso(c.start),end:iso(c.end),reason:'pending_coverage_or_delay'})); const excludedDetails=excluded.map(({__at,...x})=>x); const candidateDetails=candidates.map(c=>({start:iso(c.start),end:iso(c.end),bid_reduction:c.bySide.bid.reduce((a,x)=>a+x.reduction,0),ask_reduction:c.bySide.ask.reduce((a,x)=>a+x.reduction,0)}));
-    return {timeline,last_depth_at:Number.isFinite(lastDepth)?iso(lastDepth):null,pending_intervals:pendingDetails.length, pending_interval_details:pendingDetails,excluded_intervals:excludedDetails.length,excluded_interval_details:excludedDetails,candidate_intervals:candidateDetails.length,candidate_interval_details:candidateDetails,snapshots:snapshots.length,snapshot_details:snapshots,session_started_at:s.started_at||null};
+    return {timeline,reconciliation,last_depth_at:Number.isFinite(lastDepth)?iso(lastDepth):null,pending_intervals:pendingDetails.length, pending_interval_details:pendingDetails,excluded_intervals:excludedDetails.length,excluded_interval_details:excludedDetails,candidate_intervals:candidateDetails.length,candidate_interval_details:candidateDetails,snapshots:snapshots.length,snapshot_details:snapshots,session_started_at:s.started_at||null};
   }
   return {calculate};
 })();
@@ -830,14 +831,69 @@ const bookRecorder = (() => {
     <p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div>
     <p id="bookStatsDetail" class="small" style="line-height:1.9"></p>
-    <details><summary>疑似撤单率如何计算？</summary><p class="hint">这里只估算“可比较挂单净减少中未被同价成交解释的比例”，不是实际委托撤单率，也不是撤单量÷新增委托量。分别对买方（bid）、卖方（ask）计算：未解释净减少量 ÷ 可归因净减少量 × 100%；未解释量＝净减少量−同价成交可能抵扣量。分母为 0 显示 —。只比较相邻完整五档中同方向、同价格的挂单；移出五档、缺档、跨午休 / 日界、采样缺口和竞价不当作撤单。成交按价格和前后 3 秒窗口匹配，单条成交量最多抵扣一次；同时涉及两侧的匹配不猜方向，列为不确定量并排除比例分母。等待至少 10 秒且有覆盖时段的成交响应后才计入统计；未核对区间不按 100% 撤单处理。分时选点取选中时刻之前已确认的累计快照，明确列出实际已核对到的盘口时间。</p></details>
+    <details><summary>疑似撤单率如何计算？</summary><p class="hint">这里只估算“可比较挂单净减少中未被同价成交解释的比例”，不是实际委托撤单率，也不是撤单量÷新增委托量。分别对买方（bid）、卖方（ask）计算：未解释净减少量 ÷ 可归因净减少量 × 100%；未解释量＝净减少量−同价成交已分配量。分母为 0 显示 —。只比较相邻完整五档中同方向、同价格的挂单；移出五档、缺档、跨午休 / 日界、采样缺口和竞价不当作撤单。成交按价格和前后 3 秒窗口匹配，同一成交记录可以部分分配，但总分配不超过原始数量，每项保留原始成交引用；同时涉及两侧的匹配不猜方向，列为不确定量并排除比例分母。等待至少 10 秒且有覆盖时段的成交响应后才计入统计；未核对区间不按 100% 撤单处理。分时选点取选中时刻之前已确认的累计快照，明确列出实际已核对到的盘口时间。</p></details>
     <div class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>方向 / 价格</th><th>前量（手）</th><th>后量（手）</th><th>净变化（手）</th><th>说明</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div>
     <p class="hint">五档没有交易所时间；读取时间不等于真实委托变化时间。普通逐笔约 3 秒聚合，数据源不承诺完整：同一快照间新增与撤出可相互抵消，聚合量也不一定都成交于显示价格。因此估算不构成真实撤单率、准确上下界或交易建议。关页、断网、浏览器后台节流会产生不可补回的五档缺口。原始量为股，页面显示手。记录在本浏览器，不跨设备共享，请定期导出。</p>`;
   $('thsdkTicks').after(box);
   const panel = document.createElement('div'); panel.id = 'bookFlowPanel';
   panel.style.cssText = 'margin:10px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;background:#f7faff;line-height:1.8';
-  panel.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><strong>疑似撤单率（估算）</strong><span class="small">净减少中的未解释比例，非真实撤单率</span></div><div id="bookFlowAt" class="small">查询后从启动时刻累计。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买方累计：—</strong><div class="small" id="bookFlowBidDetail"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖方累计：—</strong><div class="small" id="bookFlowAskDetail"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
+  panel.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><strong>疑似撤单率（估算）</strong><span class="small">净减少中的未匹配比例；成交引用可逐项展开，非订单身份核销</span></div><div id="bookFlowAt" class="small">查询后从启动时刻累计。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买方累计：—</strong><div class="small" id="bookFlowBidDetail"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖方累计：—</strong><div class="small" id="bookFlowAskDetail"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
   $('chartPointInfo').after(panel);
+  const ledgerBox = document.createElement('section');
+  ledgerBox.id = 'bookLedger'; ledgerBox.style.cssText = 'margin:12px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;line-height:1.8';
+  ledgerBox.innerHTML = `<h3 style="margin:0">挂单减少逐项对账</h3><p class="small">每个已核对的共同价位净减少均列账，展开查看实际查到的成交原始行和本次分配量；五档进出与采样缺口不强行归因。这里只核对价格、时间窗口和数量，不能确认委托订单身份；未匹配减少不是已确认撤单。</p><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label class="small">显示 <select id="bookLedgerFilter"><option value="all">全部对账项</option><option value="unmatched">未完全匹配的减少</option><option value="quantity_matched">数量已配平</option><option value="ambiguous">方向不确定</option></select></label><button id="bookLedgerCSV" class="secondary" type="button">导出逐项对账 CSV</button></div><p id="bookLedgerSummary" class="small" role="status">启动后等待已核对数据。</p><div class="table-wrap" style="max-height:420px"><table style="min-width:1080px"><thead><tr><th>区间（北京）</th><th>方向 / 价格</th><th>前量 → 后量（手）</th><th>净减少（手）</th><th>同价成交分配（手）</th><th>未匹配（手）</th><th>方向不确定（手）</th><th>核对状态 / 成交证据</th></tr></thead><tbody id="bookLedgerRows"></tbody></table></div><div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button id="bookLedgerPrev" class="secondary" type="button">较新</button><span id="bookLedgerPage" class="small"></span><button id="bookLedgerNext" class="secondary" type="button">较早</button></div>`;
+  panel.after(ledgerBox);
+  let ledgerPage = 0, ledgerSession = '', ledgerRenderKey = '';
+  const ledgerRowNodes = new Map();
+  const ledgerLabels = { quantity_matched: '有同价成交，数量已配平（非订单核销）', partially_matched: '有同价成交，仍有未匹配减少', unmatched: '未匹配到成交（非已确认撤单）', ambiguous: '成交方向不确定，未作分侧分配' };
+  function renderLedger(result, cutoff, forceEmpty = false) {
+    const session = sessions.get(state.code), sessionID = session?.id || '';
+    if (sessionID !== ledgerSession) { ledgerSession = sessionID; ledgerPage = 0; ledgerRowNodes.clear(); ledgerRenderKey = ''; }
+    const all = forceEmpty ? [] : (result?.reconciliation || []).filter(r => Date.parse(r.confirmed_at) <= cutoff);
+    const filter = $('bookLedgerFilter').value;
+    const filtered = all.filter(r => filter === 'all' || (filter === 'unmatched' ? r.unexplained_shares > 0 : r.status === filter));
+    const pages = Math.max(1, Math.ceil(filtered.length / 30)); ledgerPage = Math.min(ledgerPage, pages - 1);
+    const totals = all.reduce((a, r) => { a.reduction += r.reduction_shares; a.credit += r.trade_credit_shares; a.unmatched += r.unexplained_shares; a.unknown += r.unknown_shares; return a; }, { reduction: 0, credit: 0, unmatched: 0, unknown: 0 });
+    const balanced = totals.reduction === totals.credit + totals.unmatched + totals.unknown;
+    $('bookLedgerSummary').textContent = all.length ? `${viewTime ? '截至所选时刻' : '当前会话'}共 ${all.length} 项减少。${balanced ? '账面数量配平' : '核对不一致，请勿采用统计'}：净减少 ${fmtLots(totals.reduction)} 手 = 已分配同价成交 ${fmtLots(totals.credit)} 手 + 未匹配 ${fmtLots(totals.unmatched)} 手 + 方向不确定 ${fmtLots(totals.unknown)} 手。配平不等于已确认每张订单的去向。` : '该时刻尚无已结算的挂单减少对账项；等待成交核对，不把等待中记为撤单。';
+    $('bookLedgerPage').textContent = `第 ${ledgerPage + 1} / ${pages} 页；筛选结果 ${filtered.length} 项，每页最多 30 项`;
+    $('bookLedgerPrev').disabled = ledgerPage === 0; $('bookLedgerNext').disabled = ledgerPage >= pages - 1;
+    const visible = [...filtered].reverse().slice(ledgerPage * 30, (ledgerPage + 1) * 30);
+    const key = JSON.stringify([sessionID, filter, ledgerPage, visible.map(r => r.id)]);
+    if (key === ledgerRenderKey) return; ledgerRenderKey = key;
+    const nodes = visible.map(r => {
+      if (ledgerRowNodes.has(r.id)) return ledgerRowNodes.get(r.id);
+      const tr = document.createElement('tr');
+      const clock = t => tickSourceTime(t).split(' ').at(-1);
+      const values = [`${clock(r.interval_start)} → ${clock(r.interval_end)}`, `${r.side === 'bid' ? '买' : '卖'} / ${r.price}`, `${fmtLots(r.before_shares)} → ${fmtLots(r.after_shares)}`, fmtLots(r.reduction_shares), fmtLots(r.trade_credit_shares), fmtLots(r.unexplained_shares), fmtLots(r.unknown_shares)];
+      for (const value of values) { const td = document.createElement('td'); td.textContent = value; tr.appendChild(td); }
+      tr.firstChild.title = `区间 ${r.interval_start} → ${r.interval_end}；核对确认 ${r.confirmed_at}`;
+      const td = document.createElement('td'), details = document.createElement('details'), summary = document.createElement('summary');
+      summary.textContent = `${ledgerLabels[r.status] || r.status}；${r.matches.length} 条成交引用`;
+      details.appendChild(summary);
+      const rule = document.createElement('p'); rule.className = 'small'; rule.textContent = '以下成交记录真实存在于已保存明细。本次分配按同价、时间窗及数量规则进行；本地记录键不是交易所订单编号。'; details.appendChild(rule);
+      for (const [index, m] of r.matches.entries()) {
+        const p = document.createElement('p'); p.className = 'small';
+        p.textContent = `成交引用 ${index + 1}：${tickClock(m.row.time)}｜${m.price} 元｜源记录 ${fmtLots(m.source_volume_shares)} 手｜分配给本项 ${fmtLots(m.allocated_shares)} 手`;
+        details.appendChild(p);
+        const pre = document.createElement('pre'); pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-width:420px';
+        pre.textContent = JSON.stringify({ local_record_key: m.tick_id, first_received_at: m.first_received_at, allocated_shares: m.allocated_shares, original_row: m.row }, null, 2); details.appendChild(pre);
+      }
+      const proof = document.createElement('pre'); proof.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-width:420px';
+      proof.textContent = JSON.stringify({ reconciliation_id: r.id, interval_start: r.interval_start, interval_end: r.interval_end, confirmed_at: r.confirmed_at, price: r.price, before_shares: r.before_shares, after_shares: r.after_shares, reduction_shares: r.reduction_shares, allocated_shares: r.trade_credit_shares, unmatched_shares: r.unexplained_shares, ambiguous_shares: r.unknown_shares }, null, 2);
+      details.appendChild(proof); td.appendChild(details); tr.appendChild(td); ledgerRowNodes.set(r.id, tr); return tr;
+    });
+    $('bookLedgerRows').replaceChildren(...nodes);
+    if (ledgerRowNodes.size > 1500) { const keep = new Set(visible.map(r => r.id)); for (const id of ledgerRowNodes.keys()) if (!keep.has(id)) ledgerRowNodes.delete(id); }
+  }
+  function refreshLedgerView() {
+    ledgerRenderKey = ''; renderStats();
+  }
+  $('bookLedgerFilter').addEventListener('change', () => { ledgerPage = 0; refreshLedgerView(); });
+  $('bookLedgerPrev').addEventListener('click', () => { ledgerPage = Math.max(0, ledgerPage - 1); refreshLedgerView(); });
+  $('bookLedgerNext').addEventListener('click', () => { ledgerPage++; refreshLedgerView(); });
+  $('bookLedgerCSV').addEventListener('click', () => void exportData('ledger'));
+
 
   function db() {
     if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
@@ -890,6 +946,7 @@ const bookRecorder = (() => {
       $('bookFlowAt').textContent = message;
       $('bookFlowBid').textContent = '买方累计：—'; $('bookFlowAsk').textContent = '卖方累计：—';
       for (const id of ['bookFlowBidDetail', 'bookFlowAskDetail', 'bookFlowInstant', 'bookFlowCoverage']) $(id).textContent = '';
+      renderLedger(null,cutoff,true);
     };
     if (!session) { noData('查询后从启动时刻累计；不补造启动前的五档。'); return; }
     const at = selected ? `所选 ${normalized}（北京）` : '最新累计';
@@ -906,11 +963,12 @@ const bookRecorder = (() => {
       $('bookStatsDetail').textContent = `${startText}；当前会话快照 ${result?.snapshots || 0}，候选区间 ${result?.candidate_intervals || 0}，排除区间 ${result?.excluded_intervals || 0}。`;
       return;
     }
+    renderLedger(result,cutoff);
     $('bookFlowAt').textContent = `${at}｜${startText}｜已核对盘口至 ${tickSourceTime(snapshot.through)}；确认于 ${tickSourceTime(snapshot.at)}`;
     for (const [side, label] of [['bid', '买方'], ['ask', '卖方']]) {
       const metric = snapshot[side], suffix = side === 'bid' ? 'Bid' : 'Ask';
       $('bookFlow' + suffix).textContent = `${label}累计：${fmtRate(metric.rate_pct)}`;
-      $('bookFlow' + suffix + 'Detail').textContent = `可归因净减少 ${fmtLots(metric.reduction_shares)} 手；同价成交可能抵扣 ${fmtLots(metric.trade_credit_shares)} 手；未解释 ${fmtLots(metric.unexplained_shares)} 手；方向不确定 ${fmtLots(metric.unknown_shares)} 手`;
+      $('bookFlow' + suffix + 'Detail').textContent = `可归因净减少 ${fmtLots(metric.reduction_shares)} 手；同价成交已分配 ${fmtLots(metric.trade_credit_shares)} 手；未解释 ${fmtLots(metric.unexplained_shares)} 手；方向不确定 ${fmtLots(metric.unknown_shares)} 手`;
     }
     const instant = snapshot.instant;
     $('bookFlowInstant').textContent = instant ? `最近已核对区间 ${tickSourceTime(instant.start)} → ${tickSourceTime(instant.end)}｜买方 ${fmtRate(instant.bid?.rate_pct)}，卖方 ${fmtRate(instant.ask?.rate_pct)}` : '';
@@ -1018,12 +1076,19 @@ const bookRecorder = (() => {
         const rows = [['股票', '读取时间UTC', '读取时间北京', '前次读取UTC', '间隔毫秒', '采样缺口', '方向', '价格', '前量股', '后量股', '净变化股', '说明']];
         for (const e of c.events.filter(e => e.kind === 'depth')) for (const r of e.changes || []) rows.push([code, e.received_at, tickSourceTime(e.received_at), e.previous_received_at, e.interval_ms, e.gap_warning, r.side, r.price, r.before_shares, r.after_shares, r.delta_shares, r.note]);
         download(`${code}_五档净变化_${time}.csv`, csvText(rows), 'text/csv;charset=utf-8');
+      } else if (mode === 'ledger') {
+        const rows = [['记录类型', '对账编号', '股票', '方向', '盘口价格', '区间开始UTC', '区间结束UTC', '确认UTC', '前量股', '后量股', '净减少股', '同价成交分配股', '未匹配股', '方向不确定股', '状态', '本地成交记录键', '成交原始时间Unix秒', '成交价格', '源成交数量股', '本次分配股', '原始成交JSON']];
+        for (const r of result?.reconciliation || []) {
+          rows.push(['summary', r.id, code, r.side, r.price, r.interval_start, r.interval_end, r.confirmed_at, r.before_shares, r.after_shares, r.reduction_shares, r.trade_credit_shares, r.unexplained_shares, r.unknown_shares, r.status, '', '', '', '', '', '']);
+          for (const m of r.matches) rows.push(['trade_allocation', r.id, code, r.side, r.price, r.interval_start, r.interval_end, r.confirmed_at, '', '', '', '', '', '', '', m.tick_id, m.trade_time, m.price, m.source_volume_shares, m.allocated_shares, JSON.stringify(m.row)]);
+        }
+        download(`${code}_逐项数量对账_${time}.csv`, csvText(rows), 'text/csv;charset=utf-8');
       } else if (mode === 'stats') {
-        const rows = [['股票', '会话启动UTC', '确认时间UTC', '已核对盘口时间UTC', '方向', '可归因净减少股', '成交可能抵扣股', '未解释股', '方向不确定股', '疑似撤单率估算百分比', '确认区间', '排除区间']];
+        const rows = [['股票', '会话启动UTC', '确认时间UTC', '已核对盘口时间UTC', '方向', '可归因净减少股', '同价成交分配股', '未解释股', '方向不确定股', '疑似撤单率估算百分比', '确认区间', '排除区间']];
         for (const s of result?.timeline || []) for (const side of ['bid', 'ask']) { const m = s[side]; rows.push([code, sessions.get(code)?.started_at, s.at, s.through, side, m.reduction_shares, m.trade_credit_shares, m.unexplained_shares, m.unknown_shares, m.rate_pct, s.confirmed_intervals, s.excluded_intervals]); }
         download(`${code}_疑似撤单率估算_${time}.csv`, csvText(rows), 'text/csv;charset=utf-8');
       } else {
-        download(`${code}_盘口成交原始记录_${time}.json`, JSON.stringify({ schema_version: 2, code, exported_at: stamp(), units: '原始数量为股，价格为元；ISO时间含时区', limitations: '疑似撤单率只是可比较净减少中未被同价成交解释的比例，不是真实委托撤单率或准确上下界；同指纹成交保留单次响应最大重复数，不能区分没有唯一ID的源修订。', calculation: { version: 1, metric: '可归因净减少中的未解释比例，不是真实撤单率', formula: 'unexplained_shares / reduction_shares * 100', match_window_ms: 3000, minimum_settlement_delay_ms: 10000, trade_direction: '不解释未经验证的deal_type；按同价可能抵扣，跨侧歧义排除', time_basis: '浏览器收到时间；历史选点只取确认时间不晚于选点的累计快照' }, session: sessions.get(code), statistics: result, events: c.events, ticks: [...c.ticks.values()] }, null, 2), 'application/json;charset=utf-8');
+        download(`${code}_盘口成交原始记录_${time}.json`, JSON.stringify({ schema_version: 3, code, exported_at: stamp(), units: '原始数量为股，价格为元；ISO时间含时区', limitations: '疑似撤单率只是可比较净减少中未被同价成交解释的比例，不是真实委托撤单率或准确上下界；同指纹成交保留单次响应最大重复数，不能区分没有唯一ID的源修订。', calculation: { version: 2, reconciliation_scope: '五档共同价位净减少逐项对账，不是委托订单核销', metric: '可归因净减少中的未解释比例，不是真实撤单率', formula: 'unexplained_shares / reduction_shares * 100', match_window_ms: 3000, minimum_settlement_delay_ms: 10000, trade_direction: '不解释未经验证的deal_type；按同价可能抵扣，跨侧歧义排除', time_basis: '浏览器收到时间；历史选点只取确认时间不晚于选点的累计快照' }, session: sessions.get(code), statistics: result, events: c.events, ticks: [...c.ticks.values()] }, null, 2), 'application/json;charset=utf-8');
       }
     } catch (e) { $('bookRecordStatus').textContent = '导出失败：' + e.message; }
   }
