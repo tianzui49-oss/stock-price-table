@@ -57,6 +57,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
       <div class="section-head" style="flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:6px 12px;flex-wrap:wrap"><h2 id="thsdkTitle">成交明细</h2><span class="small" id="thsdkLoadedSummary" aria-live="polite" aria-atomic="true" title="直接显示接口返回的累计成交笔数（transaction_count），随刷新更新；缺失时保留同一股票同日最近有效返回值，不以记录行数或成交手数代替。">累计成交 —笔</span></div><span class="small" id="thsdkStockLabel">跟随上方查询股票</span></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span id="thsdkMode" class="small">默认显示最新可用成交，选点查看对应时刻。</span><button class="secondary" id="tickLatestBtn" type="button">返回最新</button></div>
       <p id="thsdkStatus" class="thsdk-meta" role="status">查询后显示最新可用成交。</p>
+      <div id="thsdkRowStats" class="thsdk-meta" aria-live="polite" aria-atomic="true" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;line-height:1.9">成交记录统计：待加载。</div>
       <div class="thsdk-detail-grid">
         <div class="thsdk-trades"><div class="table-wrap thsdk-scroll" id="thsdkTableWrap" hidden><table class="thsdk-table"><thead id="thsdkTickHead"></thead><tbody id="thsdkTickBody"></tbody></table></div></div>
         <aside class="depth-box" aria-label="最新可用五档，与历史成交独立"><h3>买卖五档</h3><div style="padding:9px 10px;border-bottom:1px solid var(--line)"><button class="secondary" id="depthReadOnce" type="button" title="仅向源接口读取一次最新可用五档，不开启自动刷新">刷新五档</button></div><table class="depth-table"><thead><tr><th>档位</th><th>委托价格</th><th>委托量（手）</th></tr></thead><tbody id="thsdkDepthBody"></tbody></table><p class="depth-status" id="thsdkDepthStatus">未读取五档。收盘后不自动请求，可点“读取一次五档”；这不是所选历史时刻的盘口。</p></aside>
@@ -584,7 +585,25 @@ function tickCountTotalText(rawRows=[]){
 function tickLoadedSummary(rows=[]){
   $('thsdkLoadedSummary').textContent=tickCountTotalText(rows);
 }
-function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary(); }
+function tickRowStats(rawRows=[]){
+  const number=value=>value==null||typeof value==='boolean'||String(value).trim()===''?NaN:Number(value);
+  const rows=rawRows.map((row,index)=>({row,index,volume:number(row.volume),price:number(row.price)})).filter(r=>Number.isFinite(r.volume)&&r.volume>=0&&Number.isFinite(r.price)&&r.price>0&&Number.isFinite(r.volume*r.price));
+  if(!rows.length)return {total:rawRows.length,count:0,skipped:rawRows.length,min:null,max:null,remaining:0,averageLots:null,averageAmount:null};
+  // 并列按当前表格顺序取首条最小、末条最大；全相等也只剔除两条不同记录。
+  let min=rows[0],max=rows[0];for(const r of rows){if(r.volume<min.volume)min=r;if(r.volume>=max.volume)max=r;}
+  const rest=rows.filter(r=>r.index!==min.index&&r.index!==max.index),sum=rest.reduce((s,r)=>({volume:s.volume+r.volume,amount:s.amount+r.volume*r.price}),{volume:0,amount:0});
+  return {total:rawRows.length,count:rows.length,skipped:rawRows.length-rows.length,min,max,remaining:rest.length,averageLots:rest.length?sum.volume/rest.length/100:null,averageAmount:rest.length?sum.amount/rest.length/10000:null};
+}
+function tickRenderRowStats(rows=[]){
+  const stats=tickRowStats(rows),box=$('thsdkRowStats');box.replaceChildren();
+  const line=text=>{const div=document.createElement('div');div.textContent=text;box.appendChild(div);},fmt=n=>n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(!stats.count){line(rows.length?'成交记录统计：暂无有效价格和成交量，无法计算。':'成交记录统计：暂无可用记录。');return;}
+  const record=r=>`${fmt(r.volume/100)} 手 / ${fmt(r.volume*r.price/10000)} 万元（${tickClock(r.row.time)||'时间暂不可用'}）`;
+  line(`单条最大：${record(stats.max)}`);line(`单条最小：${record(stats.min)}`);
+  line(stats.count>=3?`各剔除一条最大、最小后，平均每条：${fmt(stats.averageLots)} 手 / ${fmt(stats.averageAmount)} 万元（剩余 ${stats.remaining} 条）`:'去极值平均：有效记录不足 3 条，暂不计算。');
+  line(`仅统计当前明细已加载的 ${stats.total} 条记录；每条约为 3 秒聚合，并非一笔真实成交。按手数选极值；并列按表格顺序取首条最小、末条最大，各只剔除一条。金额＝成交价×成交股数÷10000；零成交记录保留${stats.skipped?`；${stats.skipped} 条价格或成交量无效，未计入统计`:''}。`);
+}
+function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary();tickRenderRowStats(); }
 function tickStop(){depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
 function tickReset(){tickStop();tickState.key='';tickState.cache.clear();tickState.loadingDay='';tickState.viewRows=[];tickClear();depthReset();$('thsdkStockLabel').textContent='正在查询…';$('thsdkStatus').textContent='等待加载成交明细。';}
 function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(document.hidden||!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
@@ -660,7 +679,7 @@ function tickRender(data){
   const wrap=$('thsdkTableWrap'),body=$('thsdkTickBody'),oldTop=wrap.scrollTop;
   let anchor=null;
   if(!wrap.hidden&&oldTop>1){const visibleTop=oldTop+$('thsdkTickHead').offsetHeight,index=[...body.children].findIndex(tr=>tr.offsetTop+tr.offsetHeight>visibleTop);if(index>=0&&tickState.viewRows[index]){const key=tickRowFingerprint(tickState.viewRows[index]);anchor={key,occurrence:tickState.viewRows.slice(0,index+1).filter(r=>tickRowFingerprint(r)===key).length,offset:oldTop-body.children[index].offsetTop};}}
-  tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);if(!rows.length)return true;
+  tickState.signature=signature;tickState.viewRows=rows;tickClear();tickLoadedSummary(rows);tickRenderRowStats(rows);if(!rows.length)return true;
   const head=document.createElement('tr');for(const label of ['时间（北京时间）','成交价','成交量（手）','笔数']){const th=document.createElement('th');th.textContent=label;head.appendChild(th);}$('thsdkTickHead').appendChild(head);
   const fragment=document.createDocumentFragment();for(const row of rows){const tr=document.createElement('tr'),count=counts.get(row),session=tickCountSession(row),volume=tickLots(row.volume),countText=session?.phase==='pre'?'—':count===null?'—笔':String(count);for(const value of [tickClock(row.time)||'时间暂不可用',tickText(row.price),volume,countText]){const td=document.createElement('td');td.textContent=value;if(tr.children.length===3&&session?.phase!=='pre')td.title='盘中及当天首条收盘普通成交（可延迟返回）：按同日累计笔数差值计算，不按固定延迟秒数截断；已结算收盘后的盘后成交：有成交为1笔；零成交保留并显示0笔；—表示缺少可靠前值。';tr.appendChild(td);}fragment.appendChild(tr);}body.appendChild(fragment);wrap.hidden=false;
   if(anchor){let occurrence=0,index=rows.findIndex(row=>tickRowFingerprint(row)===anchor.key&&++occurrence===anchor.occurrence);wrap.scrollTop=index>=0?body.children[index].offsetTop+anchor.offset:oldTop;}else wrap.scrollTop=wrap.hidden?0:oldTop;
