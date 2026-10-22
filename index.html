@@ -1067,6 +1067,51 @@ const bookRecorder = (() => {
   const box = document.createElement('section'); box.className='card'; box.id='bookRecorder';
   box.innerHTML=`<div class="section-head" style="flex-wrap:wrap"><h2>实时快照明细（逐次接口返回） / 记录管理</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">查询后从启动时刻累计；同股票同日重新打开接续原会话，暂停处断开比较。自选股从打开网页时同步采集，切换股票不重置自选记录。滑动趋势图仍记录当前盘口，选点按当时已收到的数据重算，不使用后来数据。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div><p id="bookStatsDetail" class="small"></p><details><summary>方向与比率如何计算？</summary><p class="hint">买盘、卖盘由盘口 side 直接识别；比较同侧同价格的可见挂量。成交价在区间前后五档中只对应一侧时，归入该侧并扣除对应同价减少；五档外成交只计分母，不抵扣盘口；同时对应买卖两侧的成交无法归侧，或任一路覆盖不完整，区间不计累计。成交量只列一份，作为买卖两侧加单率、撤单率的共同分母。同侧同价位先算应剩挂量＝原挂量－同段成交量，再算变化＝现挂量－应剩挂量；正数计加单，负数绝对值计撤单。加单率、撤单率分别为该侧累计加单量、撤单量÷同期配对成交量。这里按五档快照推算，不是交易所逐笔委托统计。成交为零时比率无法计算，但数量保留。相邻有效快照中同侧同价位的增减与同段实时成交配对后计入累计；价位离开五档按当前可见量0、新进入按原可见量0代入推算；采样缺口及竞价不计入。按盘口后帧收到时间归3秒窗口，成交按源时间戳归档，二者不是同步交易所事件；数据每次收到即重算，不等3秒窗口结束，也不额外等10秒；迟到成交回补原窗口和累计值。3秒仅用于归档，所有窗口均可修订，成交覆盖响应也不代表最终完整。快照间新增与撤出可抵消，聚合成交也不是逐单委托记录。原始数据不删改。</p></details><p id="bookSnapshotCadence" class="small">下表跟随每次成功返回的盘口快照更新，不是3秒汇总。默认每1秒尝试请求（可调整），同接口请求未完成时不重叠；收到并保存后立即重算各表。上游缓存、请求耗时及浏览器调度仍会产生延迟，并非交易所逐事件推送。展示最近变化，全部记录可导出。</p><div id="bookRawChangesTable" class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>盘口侧 / 价格</th><th>上次可见挂量（手）</th><th>本次可见挂量（手）</th><th>净变化（手）</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">五档未提供交易所事件时间，读取时间不等于委托变化时间；加单率、撤单率按上述五档快照口径计算。统计推算按离档可见量0计算，原始记录中缺失挂量仍保留原样。关页、断网和后台节流会留下不可补回的五档缺口。数据保存在本浏览器，不跨设备共享，可导出备份。</p>`;
   $('thsdkTicks').after(box);
+  // Read-only history UI: independent of the live session and derived rate cutoffs.
+  const historyBox=document.createElement('section');historyBox.id='bookSavedHistory';historyBox.className='card';
+  historyBox.innerHTML=`<h2>本地历史记录（只读）</h2><p class="small">跨日、切换股票或重置今日比率不会删除已保存的原始记录。这里按北京时间查看该股当天全部录制会话，不受当前会话起点、走势图选点或今日比率起点限制；不改变实时采集与上方统计。五档按收到日期、逐笔按源成交日期归档；点击“刷新本地历史”读取新增记录。数据仅在原浏览器中保存，未采集的时段不能补造。</p><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><label>记录日期 <select id="bookHistoryDay" aria-label="本地记录日期"></select></label><label>记录类型 <select id="bookHistoryKind" aria-label="本地记录类型"><option value="depth">五档原始快照</option><option value="ticks">逐笔原始记录</option></select></label><button id="bookHistoryRefresh" type="button" class="secondary">刷新本地历史</button><button id="bookHistoryExport" type="button" class="secondary">导出所选日期原始 JSON</button></div><p id="bookHistorySummary" class="small" role="status">查询股票后读取本浏览器已有记录。</p><details><summary>当日录制时段 / 会话（不连接缺口）</summary><div id="bookHistoryPeriods" class="small"></div></details><div class="table-wrap" style="max-height:400px;margin-top:8px"><table style="min-width:640px"><thead><tr><th>记录时间（北京）</th><th>原始记录</th></tr></thead><tbody id="bookHistoryRows"></tbody></table></div><div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button id="bookHistoryPrev" type="button" class="secondary">历史较新页</button><span id="bookHistoryPage" class="small"></span><button id="bookHistoryNext" type="button" class="secondary">历史较早页</button></div>`;
+  box.after(historyBox);
+  let historyCode='',historyPage=0,historyKey='',historyData=null;
+  function historyTickTime(value){
+    const n=Number(value),text=String(value??'');
+    if(Number.isFinite(n)&&n>=1500000000&&n<=2200000000)return n*1000;
+    if(/^\d{14}$/.test(text))return Date.parse(`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6,8)}T${text.slice(8,10)}:${text.slice(10,12)}:${text.slice(12,14)}+08:00`);
+    return Date.parse(value);
+  }
+  function historyDay(row,kind){
+    if(kind==='ticks'){const t=historyTickTime(row.row?.time);return Number.isFinite(t)?beijingDay(t):row.day||tickRowBeijingDay(row.row)||'';}
+    const t=Date.parse(row.received_at);return Number.isFinite(t)?beijingDay(t):row.day||row.session?.day||'';
+  }
+  function historySelection(c,day){
+    return {events:c.events.filter(e=>historyDay(e,'events')===day),ticks:[...c.ticks.values()].filter(t=>historyDay(t,'ticks')===day)};
+  }
+  function renderSavedHistory(c){
+    const code=state.code;if(!code||!c)return;
+    const dates=[...new Set([...c.events.map(e=>historyDay(e,'events')),...[...c.ticks.values()].map(t=>historyDay(t,'ticks'))].filter(Boolean))].sort().reverse();
+    const select=$('bookHistoryDay'),changed=historyCode!==code,prior=changed?'':select.value;
+    const dateKey=JSON.stringify(dates);
+    if(changed||select.dataset.dates!==dateKey){select.replaceChildren(...dates.map(day=>{const o=document.createElement('option');o.value=day;o.textContent=day;return o;}));select.dataset.dates=dateKey;select.value=dates.includes(prior)?prior:(dates[0]||'');}
+    if(changed){historyCode=code;historyPage=0;historyKey='';}
+    const day=select.value,{events,ticks}=historySelection(c,day),depth=events.filter(e=>e.kind==='depth'),kind=$('bookHistoryKind').value;
+    historyData={code,day,events,ticks};
+    $('bookHistorySummary').textContent=day?`${code}｜${day}｜本机原始五档 ${depth.length} 帧，逐笔 ${ticks.length} 条，接口 / 会话事件 ${events.length} 条。含当天全部旧会话；空时段不等于删除，录制缺口不会补造。`:`${code}：当前浏览器未读到该股本地记录；不能据此断言其他浏览器的数据已丢失。`;
+    $('bookHistoryExport').disabled=!day;
+    const rows=kind==='ticks'?[...ticks].sort((a,b)=>historyTickTime(b.row?.time)-historyTickTime(a.row?.time)||Date.parse(b.first_received_at)-Date.parse(a.first_received_at)):[...depth].sort((a,b)=>Date.parse(b.received_at)-Date.parse(a.received_at));
+    const pages=Math.max(1,Math.ceil(rows.length/30));historyPage=Math.min(historyPage,pages-1);
+    $('bookHistoryPage').textContent=`第 ${historyPage+1}/${pages} 页，共 ${rows.length} 条`;$('bookHistoryPrev').disabled=historyPage===0;$('bookHistoryNext').disabled=historyPage>=pages-1;
+    const visible=rows.slice(historyPage*30,(historyPage+1)*30),key=JSON.stringify([code,day,kind,historyPage,events.length,ticks.length,visible]);if(key===historyKey)return;historyKey=key;
+    const groups=new Map();for(const e of events){if(e.kind!=='depth')continue;const id=JSON.stringify([e.session_id||'未标注会话',e.segment_id||'未标注片段']);if(!groups.has(id))groups.set(id,[]);groups.get(id).push(e);}
+    $('bookHistoryPeriods').replaceChildren(...[...groups.values()].map(group=>{const sorted=[...group].sort((a,b)=>Date.parse(a.received_at)-Date.parse(b.received_at)),p=document.createElement('p');p.textContent=`${tickSourceTime(sorted[0].received_at)} → ${tickSourceTime(sorted.at(-1).received_at)}｜${sorted.length} 帧｜会话 ${sorted[0].session_id||'未标注'}｜片段 ${sorted[0].segment_id||'未标注'}（起止范围内仍可能有采样缺口）`;return p;}));
+    if(!groups.size){const p=document.createElement('p');p.textContent='该日未读到五档快照；如有逐笔，可切换记录类型查看。';$('bookHistoryPeriods').append(p);}
+    $('bookHistoryRows').replaceChildren(...visible.map(row=>{const tr=document.createElement('tr'),at=document.createElement('td'),cell=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),raw=document.createElement('pre');at.textContent=kind==='ticks'?tickSourceTime(historyTickTime(row.row?.time)):tickSourceTime(row.received_at);summary.textContent=kind==='ticks'?`成交价 ${row.row?.price??'—'}｜成交量 ${row.row?.volume??'—'} 股｜展开原始记录`:`${row.payload?.rows?.length||0} 档｜展开原始快照${row.gap_warning?'（采样缺口）':''}`;raw.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px';raw.textContent=JSON.stringify(row,null,2);details.append(summary,raw);cell.append(details);tr.append(at,cell);return tr;}));
+  }
+  function refreshSavedHistory(){const c=caches.get(state.code);if(c)renderSavedHistory(c);}
+  for(const id of ['bookHistoryDay','bookHistoryKind'])$(id).addEventListener('change',()=>{historyPage=0;historyKey='';refreshSavedHistory();});
+  $('bookHistoryRefresh').addEventListener('click',()=>{historyKey='';refreshSavedHistory();});
+  $('bookHistoryPrev').addEventListener('click',()=>{historyPage=Math.max(0,historyPage-1);refreshSavedHistory();});
+  $('bookHistoryNext').addEventListener('click',()=>{historyPage++;refreshSavedHistory();});
+  $('bookHistoryExport').addEventListener('click',()=>{refreshSavedHistory();if(!historyData?.day||historyData.code!==state.code)return;download(`${historyData.code}_${historyData.day}_本地原始历史.json`,JSON.stringify({schema_version:1,exported_at:stamp(),scope:'按北京时间所选日期的全部会话原始记录；只读导出，不改写原始库',...historyData},null,2),'application/json;charset=utf-8');});
+
   const panel=document.createElement('div');panel.id='bookFlowPanel';panel.style.cssText='margin:10px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;background:#f7faff;line-height:1.8';
   panel.innerHTML=`<strong>五档累计撤单率</strong><p class="small">买卖两侧分别累计撤单量，除以双路覆盖完整的同段累计成交量；按现挂量减去原挂量扣成交后的应剩挂量，正数为加单，负数为撤单。</p><div id="bookFlowAt" class="small">查询后开始累计。</div><div id="bookFlowVolume" style="font-weight:600" aria-live="polite">共同成交量：等待有效观察区间。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买盘累计撤单率：—</strong><div id="bookFlowBidDetail" class="small"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖盘累计撤单率：—</strong><div id="bookFlowAskDetail" class="small"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
   $('chartPointInfo').after(panel);
@@ -1233,6 +1278,7 @@ const bookRecorder = (() => {
     try {
       const code = state.code; if (!code) { $('bookRecordStatus').textContent = '等待查询；记录保存在本浏览器。'; renderStats(); return; }
       const c = await cacheFor(code); if (state.code !== code) return;
+      if(historyCode!==code)renderSavedHistory(c);
       $('bookRecordStatus').textContent = `${code}｜已保存 ${c.events.filter(e => e.kind === 'depth' || e.kind === 'tick_response').length} 次接口响应，${c.ticks.size} 条去重成交原始行｜${enabled && collectors.has(code) ? '随页面成功读取记录' : '记录已暂停'}${health.get(code)?.saveError ? '｜保存问题：' + health.get(code).saveError : '｜本浏览器持久保存（非云端）'}`;
       const history = c.events.filter(e => e.kind === 'depth').slice(-60).reverse().flatMap(e => (e.changes || []).map(change => ({ ...change, received_at: e.received_at, gap: e.gap_warning }))).slice(0, 30);
       const body = $('bookRecordRows'); body.replaceChildren();
