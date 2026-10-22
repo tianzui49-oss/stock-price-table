@@ -1087,7 +1087,7 @@ const bookRecorder = (() => {
     }
     const timeline = result?.timeline || []; let lo = 0, hi = timeline.length;
     while (lo < hi) { const mid = (lo + hi) >>> 1; if (Date.parse(timeline[mid].at) <= cutoff) lo = mid + 1; else hi = mid; }
-    const snapshot = lo ? timeline[lo - 1] : null;
+    const snapshot = selected ? (lo ? timeline[lo - 1] : null) : (timeline.at(-1) || null);
     const startText = `启动 ${tickSourceTime(session.started_at)}（北京）`;
     if (!snapshot) {
       noData(`${at}｜${startText}｜等待两帧连续有效盘口；数据收到即计算，不等待窗口结束或成交响应。`);
@@ -1172,13 +1172,21 @@ const bookRecorder = (() => {
     drop(code);const job={ready:false,busy:false,controller:null,next:0,initial:true};collectors.set(code,job);
     const task=async()=>{
       if(collectors.get(code)!==job)return;
-      const d=await db(),saved=await request(d.transaction('latest').objectStore('latest').get('stats-session:'+code));
-      const day=beijingDay(startedAt),old=saved?.session;
-      const session=!reset&&old?.day===day?old:{id:`${code}|${startedAt}`,code,day,started_at:startedAt};
+      const d=await db(),day=beijingDay(startedAt),recoveryKey='stats-original-session-recovered:'+code+':'+day;
+      const read=d.transaction(['latest','events']);
+      const [saved,recovery,recorded]=await Promise.all([request(read.objectStore('latest').get('stats-session:'+code)),request(read.objectStore('latest').get(recoveryKey)),request(read.objectStore('events').index('code').getAll(code))]);
+      const old=saved?.session;
+      let session=!reset&&old?.day===day?old:{id:`${code}|${startedAt}`,code,day,started_at:startedAt},recovered=false;
+      if(!reset&&!recovery){
+        const hasSavedDepth=new Set(recorded.filter(e=>e.kind==='depth'&&Number.isFinite(Date.parse(e.received_at))&&beijingDay(e.received_at)===day&&e.payload?.rows?.length===10&&e.payload.rows.every(r=>r&&Number.isFinite(Number(r.price))&&Number(r.price)>0&&Number.isSafeInteger(Number(r.volume))&&Number(r.volume)>=0)).map(e=>e.session_id));
+        const candidates=recorded.filter(e=>['stats_start','stats_resume'].includes(e.kind)).map(e=>e.session).concat(old||[]).filter(x=>x?.id&&x.code===code&&x.day===day&&Number.isFinite(Date.parse(x.started_at))&&beijingDay(x.started_at)===day&&hasSavedDepth.has(x.id)).sort((a,b)=>Date.parse(a.started_at)-Date.parse(b.started_at));
+        if(candidates.length){session={...candidates[0]};recovered=true;}
+      }
       const segment=`${stamp()}|${Math.random().toString(36).slice(2,7)}`;
       const tx=d.transaction(['latest','events'],'readwrite'),done=complete(tx);
       tx.objectStore('latest').put({code:'stats-session:'+code,session});
-      tx.objectStore('events').add({kind:old?.id===session.id?'stats_resume':'stats_start',code,received_at:stamp(),session_id:session.id,segment_id:segment,session});
+      if(reset||recovered)tx.objectStore('latest').put({code:recoveryKey,day,selected_session_id:session.id,recovered_at:stamp()});
+      tx.objectStore('events').add({kind:recovered||old?.id===session.id?'stats_resume':'stats_start',code,received_at:stamp(),session_id:session.id,segment_id:segment,session});
       await done;if(collectors.get(code)!==job)return;
       sessions.set(code,session);segments.set(code,segment);caches.delete(code);knownTicks.delete(code);job.ready=true;
     };
