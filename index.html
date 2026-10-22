@@ -752,6 +752,31 @@ function depthSync(force=false,manual=false){
     depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
   }).catch(()=>{if(generation===depthState.generation&&code===state.code)depthShow('读取失败，请稍后重试。');}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}depthShow();});
 }
+/* Calculation-only daily session view; persisted raw events and ticks are never rewritten. */
+const BookRecordingSession = (() => {
+  const ms = v => { const t = Date.parse(v); return Number.isFinite(t) ? t : NaN; };
+  const day = t => new Date(t + 8 * 3600000).toISOString().slice(0, 10);
+  function resolve(inputEvents, session) {
+    const s = session || {}, target = s.day, code = s.code;
+    if (!target) return s;
+    const events = (Array.isArray(inputEvents) ? inputEvents : []).filter(e => e && (!code || !e.code || e.code === code) && Number.isFinite(ms(e.received_at)) && day(ms(e.received_at)) === target);
+    let reset = ms(s.manual_reset_at);
+    if (Number.isFinite(reset) && day(reset) !== target) reset = NaN;
+    for (const e of events) if (e.manual_reset === true) { const t = ms(e.session?.manual_reset_at || e.session?.started_at || e.received_at); if (Number.isFinite(t)) reset = Number.isFinite(reset) ? Math.max(reset, t) : t; }
+    let start = ms(s.started_at);
+    for (const e of events) {
+      if (!e.session_id || !['stats_start','stats_resume','depth','tick_response'].includes(e.kind)) continue;
+      const t = ms(e.session?.started_at || e.received_at);
+      if (Number.isFinite(t) && day(t) === target) start = Number.isFinite(start) ? Math.min(start, t) : t;
+    }
+    if (Number.isFinite(reset)) start = reset;
+    const ids = new Set(s.session_ids || []); if (s.id) ids.add(s.id);
+    for (const e of events) if (e.session_id && (!Number.isFinite(start) || ms(e.received_at) >= start)) ids.add(e.session_id);
+    return { ...s, started_at: Number.isFinite(start) ? new Date(start).toISOString() : s.started_at, session_ids: [...ids].sort(), daily_merge: true, ...(Number.isFinite(reset) ? { manual_reset_at: new Date(reset).toISOString() } : {}) };
+  }
+  return { resolve };
+})();
+
 /* Live, revisable three-second buckets, not a settlement timer; trade direction stays neutral. */
 const BookThreeSecondCalculator = (() => {
   const N = v => typeof v === 'number' ? v : Number(v);
@@ -782,8 +807,8 @@ const BookThreeSecondCalculator = (() => {
   function coverage(r, t0, t1, d) { const b = r.payload_metadata?.bounds || {}, rt = ms(r.received_at); if (!Number.isFinite(rt) || rt < t1) return false; if (b.mode === 'available-day') return b.day === d; if (b.mode === 'minute') { const lo = local(b.start), hi = local(b.end); return Number.isFinite(lo) && Number.isFinite(hi) && lo <= t0 && hi >= t1; } return false; }
 
   function calculate(inputEvents, inputTicks, session, cutoff = Infinity) {
-    const s = session || {}, sid = s.id, code = s.code, targetDay = s.day, sessionStart = ms(s.started_at);
-    const events = (Array.isArray(inputEvents) ? inputEvents : []).filter(e => e && e.session_id === sid).map((e, i) => ({ ...e, __i: i, __t: ms(e.received_at) })).filter(e => Number.isFinite(e.__t) && (!Number.isFinite(sessionStart) || e.__t >= sessionStart) && e.__t <= cutoff).sort((a, b) => a.__t - b.__t || a.__i - b.__i);
+    const s = typeof BookRecordingSession !== 'undefined' ? BookRecordingSession.resolve(inputEvents, session) : session || {}, sid = s.id, code = s.code, targetDay = s.day, sessionStart = ms(s.started_at), sessionIds = new Set(s.session_ids || [sid]);
+    const events = (Array.isArray(inputEvents) ? inputEvents : []).filter(e => e && sessionIds.has(e.session_id) && (!code || !e.code || e.code === code) && (!targetDay || (Number.isFinite(ms(e.received_at)) && day(ms(e.received_at)) === targetDay))).map((e, i) => ({ ...e, __i: i, __t: ms(e.received_at) })).filter(e => Number.isFinite(e.__t) && (!Number.isFinite(sessionStart) || e.__t >= sessionStart) && e.__t <= cutoff).sort((a, b) => a.__t - b.__t || a.__i - b.__i);
     const depths = events.filter(e => e.kind === 'depth'), responses = events.filter(e => e.kind === 'tick_response');
     const snapshots = [], excluded = [], pairs = [], boundary = []; let prev = null, lastDepth = null, baseline = { bid: null, ask: null }, baselineReady = false;
     for (const e of depths) {
@@ -793,8 +818,8 @@ const BookThreeSecondCalculator = (() => {
       if (!baselineReady && inHours) { for (const side of ['bid', 'ask']) baseline[side] = q.a[side].reduce((z, x) => z + x.shares, 0); baselineReady = true; }
       if (!prev) { prev = { e, q, ph }; continue; }
       const lim = Math.max(5000, N(e.gap_limit_ms || 5000)), gap = e.__t - prev.e.__t;
-      const good = e.segment_id === prev.e.segment_id && prev.ph === ph && gap > 0 && gap <= lim && !e.gap_warning && inHours && !!prev.ph && day(prev.e.__t) === (targetDay || day(prev.e.__t));
-      if (!good) { excluded.push({ start: iso(prev.e.__t), end: iso(e.__t), reason: e.gap_warning ? 'gap_warning' : e.segment_id !== prev.e.segment_id ? 'segment_boundary' : prev.ph !== ph ? 'phase_boundary' : !inHours ? 'outside_session' : 'gap', __at: e.__t }); prev = { e, q, ph }; continue; }
+      const good = e.session_id === prev.e.session_id && e.segment_id === prev.e.segment_id && prev.ph === ph && gap > 0 && gap <= lim && !e.gap_warning && inHours && !!prev.ph && day(prev.e.__t) === (targetDay || day(prev.e.__t));
+      if (!good) { excluded.push({ start: iso(prev.e.__t), end: iso(e.__t), reason: e.gap_warning ? 'gap_warning' : e.session_id !== prev.e.session_id || e.segment_id !== prev.e.segment_id ? 'segment_boundary' : prev.ph !== ph ? 'phase_boundary' : !inHours ? 'outside_session' : 'gap', __at: e.__t }); prev = { e, q, ph }; continue; }
       const sides = { bid: [], ask: [] };
       for (const side of ['bid', 'ask']) {
         const old = new Map(prev.q.a[side].map(x => [x.price, x.shares])), cur = new Map(q.a[side].map(x => [x.price, x.shares]));
@@ -902,9 +927,9 @@ const BookStatisticsAudit = (() => {
   const eq=(a,b)=>a===null||b===null?a===b:Math.abs(a-b)<=1e-8;
   const rate=(quantity,volume)=>volume>0?quantity/volume*100:null;
   function calculate(inputEvents,inputTicks,session,result) {
-    const s=session||{}, sid=s.id, code=s.code, asOf=ms(result?.as_of), sessionStart=ms(s.started_at), seen=new Set();
+    const s=typeof BookRecordingSession!=='undefined'?BookRecordingSession.resolve(inputEvents,session):session||{}, sid=s.id, code=s.code, asOf=ms(result?.as_of), sessionStart=ms(s.started_at), sessionIds=new Set(s.session_ids||[sid]), seen=new Set();
     const available=t=>Number.isFinite(t)&&(!Number.isFinite(asOf)||t<=asOf);
-    const ev=(Array.isArray(inputEvents)?inputEvents:[]).filter(e=>e&&e.session_id===sid).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>available(e.__t)&&(!Number.isFinite(sessionStart)||e.__t>=sessionStart)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
+    const ev=(Array.isArray(inputEvents)?inputEvents:[]).filter(e=>e&&sessionIds.has(e.session_id)&&(!code||!e.code||e.code===code)&&(!s.day||(Number.isFinite(ms(e.received_at))&&new Date(ms(e.received_at)+8*3600000).toISOString().slice(0,10)===s.day))).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>available(e.__t)&&(!Number.isFinite(sessionStart)||e.__t>=sessionStart)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
     const depths=ev.filter(e=>e.kind==='depth'), idx=depths.map(e=>e.__t), ticksByWindow=new Map();
     for(const [i,t] of (Array.isArray(inputTicks)?inputTicks:[]).entries()) { if(t?.id!=null){if(seen.has(t.id))continue;seen.add(t.id);} const recv=ms(t?.first_received_at), trade=ms(t?.row?.time), vol=t?.row?.volume; if((!code||t.code===code)&&available(recv)&&Number.isFinite(trade)&&trade<=asOf&&(!Number.isFinite(sessionStart)||(trade>=sessionStart&&recv>=sessionStart))&&(!s.day||new Date(trade+8*3600000).toISOString().slice(0,10)===s.day)&&Number.isFinite(N(t?.row?.price))&&share(vol)){const w=Math.floor(trade/3000)*3000;if(!ticksByWindow.has(w))ticksByWindow.set(w,[]);ticksByWindow.get(w).push({t,recv,trade,vol:N(vol),i});} }
     const top=Array.isArray(result?.windows)?result.windows:[], timeline=Array.isArray(result?.timeline)?result.timeline:[], cumulative={bid:metric(),ask:metric()}, out=[]; let cumulativeIncomplete=false;
@@ -922,7 +947,7 @@ const BookStatisticsAudit = (() => {
       if(frames.some(e=>e.__t<lo||e.__t>hi||e.__t>conf))mark('原始帧超出窗口源范围或确认时间');
       if(!Number.isSafeInteger(w.sample_pairs)||w.sample_pairs!==Math.max(0,frames.length-1)&&!tradeOnly)mark('原始帧对数与窗口比较次数不一致');
       const parsed=frames.map(e=>({e,q:parse(e)})); if(parsed.some(x=>!x.q.valid))mark('原始快照不完整或五档无效');
-      for(let i=1;i<parsed.length;i++){const p=parsed[i-1],c=parsed[i],gap=c.e.__t-p.e.__t,lim=Math.max(5000,N(c.e.gap_limit_ms||p.e.gap_limit_ms||5000)); if(c.e.__t<start||c.e.__t>=end)mark('原始后帧不属于当前3秒窗口'); if(c.e.segment_id!==p.e.segment_id)mark('原始快照跨 segment，连续性无效'); if(!(gap>0&&gap<=lim)||c.e.gap_warning)mark(c.e.gap_warning?'原始快照含 gap_warning':'原始快照时间不连续'); if(!sameChanges(c.e.changes,expected(p.q,c.q)))issues.push('原始 changes 与两帧逐价变动不一致');}
+      for(let i=1;i<parsed.length;i++){const p=parsed[i-1],c=parsed[i],gap=c.e.__t-p.e.__t,lim=Math.max(5000,N(c.e.gap_limit_ms||p.e.gap_limit_ms||5000)); if(c.e.__t<start||c.e.__t>=end)mark('原始后帧不属于当前3秒窗口'); if(c.e.session_id!==p.e.session_id||c.e.segment_id!==p.e.segment_id)mark('原始快照跨 segment，连续性无效'); if(!(gap>0&&gap<=lim)||c.e.gap_warning)mark(c.e.gap_warning?'原始快照含 gap_warning':'原始快照时间不连续'); if(!sameChanges(c.e.changes,expected(p.q,c.q)))issues.push('原始 changes 与两帧逐价变动不一致');}
       const raw={bid:metric(),ask:metric(),source_trade_volume_shares:0};
       if(!incomplete&&!tradeOnly){const common={bid:new Set(parsed[0].q.a.bid.map(x=>x.price)),ask:new Set(parsed[0].q.a.ask.map(x=>x.price))};for(const x of parsed)for(const side of sides)common[side]=new Set([...common[side]].filter(p=>x.q.a[side].some(y=>y.price===p)));for(let i=1;i<parsed.length;i++)for(const side of sides){const old=new Map(parsed[i-1].q.a[side].map(x=>[x.price,x.shares])),cur=new Map(parsed[i].q.a[side].map(x=>[x.price,x.shares]));for(const [p,v] of old){if(!common[side].has(p)||!cur.has(p))continue;const z=cur.get(p)-v;if(z>0)raw[side].added_shares+=z;else if(z<0)raw[side].observed_reduction_shares-=z;}}for(const side of sides){raw[side].net_change_shares=raw[side].added_shares-raw[side].observed_reduction_shares;raw[side].denominator_trade_shares=0;}}
       const bucket=ticksByWindow.get(Math.floor((Number.isFinite(start)?start:0)/3000)*3000)||[]; for(const x of bucket)if(x.trade>=start&&x.trade<end&&available(x.recv))raw.source_trade_volume_shares+=x.vol; raw.bid.denominator_trade_shares=raw.source_trade_volume_shares;raw.ask.denominator_trade_shares=raw.source_trade_volume_shares;
@@ -980,7 +1005,7 @@ const bookRecorder = (() => {
   let viewTime = null;
   const last = new Map(), knownTicks = new Map(), sessions = new Map(), segments = new Map(), caches = new Map();
   const box = document.createElement('section'); box.className='card'; box.id='bookRecorder';
-  box.innerHTML=`<div class="section-head" style="flex-wrap:wrap"><h2>实时快照明细（逐次接口返回） / 记录管理</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">查询后从启动时刻累计；同股票同日重新打开接续原会话，暂停处断开比较。自选股从打开网页时同步采集，切换股票不重置自选记录。滑动趋势图仍记录当前盘口，选点按当时已收到的数据重算，不使用后来数据。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div><p id="bookStatsDetail" class="small"></p><details><summary>方向与比率如何计算？</summary><p class="hint">买盘、卖盘由盘口 side 直接识别；比较同侧同价格的可见挂量。成交主动方向尚未可靠核实，绝不根据哪侧挂量减少来推断成交方向，不把任何成交分配给某一侧。成交量只列一份，作为两侧增加/成交比、减少/成交比的共同分母；这不是撤单率或真实加单率。成交为零时比率无法计算，但数量保留。窗口内始终可见的共同价位才计入增减；进出五档、采样缺口及竞价不强行归因。按盘口后帧收到时间归3秒窗口，成交按源时间戳归档，二者不是同步交易所事件；数据每次收到即重算，不等3秒窗口结束，也不额外等10秒；迟到成交回补原窗口和累计值。3秒仅用于归档，所有窗口均可修订，成交覆盖响应也不代表最终完整。快照间新增与撤出可抵消，聚合成交也不是逐单委托记录。原始数据不删改。</p></details><p id="bookSnapshotCadence" class="small">下表跟随每次成功返回的盘口快照更新，不是3秒汇总。默认每1秒尝试请求（可调整），同接口请求未完成时不重叠；收到并保存后立即重算各表。上游缓存、请求耗时及浏览器调度仍会产生延迟，并非交易所逐事件推送。展示最近变化，全部记录可导出。</p><div id="bookRawChangesTable" class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>盘口侧 / 价格</th><th>上次可见挂量（手）</th><th>本次可见挂量（手）</th><th>净变化（手）</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">五档未提供交易所事件时间，读取时间不等于委托变化时间；无可靠主动方向与逐笔委托/撤单事件，撤单率无法确认。离开五档不等于挂量归零。关页、断网和后台节流会留下不可补回的五档缺口。数据保存在本浏览器，不跨设备共享，可导出备份。</p>`;
+  box.innerHTML=`<div class="section-head" style="flex-wrap:wrap"><h2>实时快照明细（逐次接口返回） / 记录管理</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">查询后从启动时刻累计；同股票同日重新打开合并当天已存的所有录制片段，暂停处断开比较；只有点击“从现在重新统计”才另设累计起点，不删除原始记录。自选股从打开网页时同步采集，切换股票不重置自选记录。滑动趋势图仍记录当前盘口，选点按当时已收到的数据重算，不使用后来数据。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div><p id="bookStatsDetail" class="small"></p><details><summary>方向与比率如何计算？</summary><p class="hint">买盘、卖盘由盘口 side 直接识别；比较同侧同价格的可见挂量。成交主动方向尚未可靠核实，绝不根据哪侧挂量减少来推断成交方向，不把任何成交分配给某一侧。成交量只列一份，作为两侧增加/成交比、减少/成交比的共同分母；这不是撤单率或真实加单率。成交为零时比率无法计算，但数量保留。窗口内始终可见的共同价位才计入增减；进出五档、采样缺口及竞价不强行归因。按盘口后帧收到时间归3秒窗口，成交按源时间戳归档，二者不是同步交易所事件；数据每次收到即重算，不等3秒窗口结束，也不额外等10秒；迟到成交回补原窗口和累计值。3秒仅用于归档，所有窗口均可修订，成交覆盖响应也不代表最终完整。快照间新增与撤出可抵消，聚合成交也不是逐单委托记录。原始数据不删改。</p></details><p id="bookSnapshotCadence" class="small">下表跟随每次成功返回的盘口快照更新，不是3秒汇总。默认每1秒尝试请求（可调整），同接口请求未完成时不重叠；收到并保存后立即重算各表。上游缓存、请求耗时及浏览器调度仍会产生延迟，并非交易所逐事件推送。展示最近变化，全部记录可导出。</p><div id="bookRawChangesTable" class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>盘口侧 / 价格</th><th>上次可见挂量（手）</th><th>本次可见挂量（手）</th><th>净变化（手）</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">五档未提供交易所事件时间，读取时间不等于委托变化时间；无可靠主动方向与逐笔委托/撤单事件，撤单率无法确认。离开五档不等于挂量归零。关页、断网和后台节流会留下不可补回的五档缺口。数据保存在本浏览器，不跨设备共享，可导出备份。</p>`;
   $('thsdkTicks').after(box);
   const panel=document.createElement('div');panel.id='bookFlowPanel';panel.style.cssText='margin:10px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;background:#f7faff;line-height:1.8';
   panel.innerHTML=`<strong>可见挂量减少 / 成交比（不是撤单率）</strong><p class="small">撤单率：无法确认。盘口买卖侧已知，成交主动方向未确认；不将成交量分配给任一侧。</p><div id="bookFlowAt" class="small">查询后开始累计。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买盘累计：—</strong><div id="bookFlowBidDetail" class="small"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖盘累计：—</strong><div id="bookFlowAskDetail" class="small"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
@@ -1063,7 +1088,8 @@ const bookRecorder = (() => {
     caches.set(code, c); return c;
   }
   function recompute(code, force = false, cutoff = Infinity) {
-    const c = caches.get(code), session = sessions.get(code); if (!c || !session) return null;
+    const c = caches.get(code); let session = sessions.get(code); if (!c || !session) return null;
+    session = BookRecordingSession.resolve(c.events, session); sessions.set(code, session);
     if (force || c.dirty || !c.result || c.cutoff !== cutoff) {
       c.result = BookThreeSecondCalculator.calculate(c.events, [...c.ticks.values()], session, cutoff);
       c.result.integrity_audit = BookStatisticsAudit.calculate(c.events, [...c.ticks.values()], session, c.result);
@@ -1072,10 +1098,10 @@ const bookRecorder = (() => {
     return c.result;
   }
   function renderStats() {
-    const code = state.code, session = sessions.get(code), selected = viewTime;
+    const code = state.code, selected = viewTime; let session = sessions.get(code);
     const normalized = selected ? normalizeChartTime(selected) : null;
     const cutoff = normalized ? Date.parse(normalized.replace(' ', 'T') + '+08:00') : Date.now();
-    const result = recompute(code, false, selected ? cutoff : Infinity);
+    const result = recompute(code, false, selected ? cutoff : Infinity); session = sessions.get(code);
     const noData = message => {
       $('bookFlowAt').textContent = message;
       $('bookFlowBid').textContent = '买盘累计：—'; $('bookFlowAsk').textContent = '卖盘累计：—';
@@ -1170,7 +1196,7 @@ const bookRecorder = (() => {
     for(const code of desired)if(!collectors.has(code))void start(code);
     if(!scheduler)scheduler=setInterval(heartbeat,1000);
   }
-  async function start(code,startedAt=stamp(),reset=false){
+  async function start(code,startedAt=stamp(),reset=false,manualReset=false){
     if(!enabled||stopped||!desiredCodes().includes(code))return;
     if(collectors.has(code)&&!reset)return;
     drop(code);const job={ready:false,busy:false,controller:null,next:0,initial:true};collectors.set(code,job);
@@ -1178,11 +1204,11 @@ const bookRecorder = (() => {
       if(collectors.get(code)!==job)return;
       const d=await db(),saved=await request(d.transaction('latest').objectStore('latest').get('stats-session:'+code));
       const day=beijingDay(startedAt),old=saved?.session;
-      const session=!reset&&old?.day===day?old:{id:`${code}|${startedAt}`,code,day,started_at:startedAt};
+      const session=!reset&&old?.day===day?old:{id:`${code}|${startedAt}`,code,day,started_at:startedAt,...(manualReset?{manual_reset_at:startedAt}:{})};
       const segment=`${stamp()}|${Math.random().toString(36).slice(2,7)}`;
       const tx=d.transaction(['latest','events'],'readwrite'),done=complete(tx);
       tx.objectStore('latest').put({code:'stats-session:'+code,session});
-      tx.objectStore('events').add({kind:old?.id===session.id?'stats_resume':'stats_start',code,received_at:stamp(),session_id:session.id,segment_id:segment,session});
+      tx.objectStore('events').add({kind:old?.id===session.id?'stats_resume':'stats_start',code,received_at:stamp(),session_id:session.id,segment_id:segment,session,...(manualReset?{manual_reset:true}:{})});
       await done;if(collectors.get(code)!==job)return;
       sessions.set(code,session);segments.set(code,segment);caches.delete(code);knownTicks.delete(code);job.ready=true;
     };
@@ -1193,7 +1219,7 @@ const bookRecorder = (() => {
   async function begin(code,startedAt=stamp(),reset=false){
     activeCode=code;viewTime=null;stopped=false;
     const nextDay=sessions.has(code)&&sessions.get(code).day!==beijingDay(startedAt);
-    if(reset||nextDay||!collectors.has(code))await start(code,startedAt,reset||nextDay);
+    if(reset||nextDay||!collectors.has(code))await start(code,startedAt,reset||nextDay,reset);
     syncWatchlist();if(!collectors.get(code)?.ready)await queue;
     await refresh();watchlist.render();
   }
