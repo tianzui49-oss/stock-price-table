@@ -340,6 +340,23 @@ function mergePoints(...groups){const map=new Map();for(const group of groups)fo
 function normalizeChartTime(value){const s=String(value||'');if(/^\d{14}$/.test(s))return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(8,10)}:${s.slice(10,12)}:${s.slice(12,14)}`;if(/^\d{12}$/.test(s))return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)} ${s.slice(8,10)}:${s.slice(10,12)}:00`;return s;}
 function loadChart(code,day){try{const d=JSON.parse(localStorage.getItem(`stock-chart-${code}-${day}`)||'[]');return Array.isArray(d)?d.map(p=>({...p,time:normalizeChartTime(p.time)})).filter(p=>p.time&&Number.isFinite(Number(p.price))&&Number(p.price)>0):[];}catch{return [];}}
 function storeChart(code,day,points){try{localStorage.setItem(`stock-chart-${code}-${day}`,JSON.stringify(points));}catch{}}
+// Display-only validation: never rewrite/remove the original cached samples.
+// Minute closes are not tick lows; only source-reported session extremes can
+// disprove a live sample. A quote may validate only samples at/before its time.
+function chartDisplayPoints(day,points){
+  const q=state.quote,quoteTime=normalizeChartTime(q?.time),row=day<dayShanghai()?state.dailyByDate?.[day]:null;
+  const validRange=(low,high)=>Number.isFinite(Number(low))&&Number.isFinite(Number(high))&&Number(low)>0&&Number(high)>=Number(low);
+  const quoteRange=quoteTime?.slice(0,10)===day&&validRange(q?.low,q?.high)&&Number(q.current)>=Number(q.low)&&Number(q.current)<=Number(q.high);
+  const dailyRange=row&&validRange(row.low,row.high);
+  return points.filter(p=>{
+    if(!p.isLive)return true;
+    const time=normalizeChartTime(p.time),range=quoteRange&&time<=quoteTime?q:dailyRange?row:null;
+    if(!range)return true; // No corroborating range: do not guess or smooth.
+    const price=Math.round(Number(p.price)*100);
+    return price>=Math.round(Number(range.low)*100)&&price<=Math.round(Number(range.high)*100);
+  });
+}
+
 async function ensureChartReference(day){
   const ref=chartReference(day);if(ref.prev>0&&ref.open>0&&volumeRatioBaseline(day).length===5&&state.dailyHistoryRanges?.some(([start,end])=>day>=start&&day<=end&&volumeRatioBaseline(day)[0].date>=start))return;
   const symbol=state.symbol,start=new Date(new Date(day+'T00:00:00Z').getTime()-370*86400000).toISOString().slice(0,10);
@@ -351,8 +368,8 @@ async function loadSelectedChartDay(){
   if(!state.intradayByDate[day]){setStatus(`正在查询 ${day} 的历史分钟线…`);try{const bars=await fetchMinuteBars(state.symbol,'5',day.replaceAll('-',''),day.replaceAll('-',''));const sameDay=bars.filter(p=>p.time.slice(0,10)===day);if(sameDay.length)state.intradayByDate[day]=sameDay;}catch(e){console.warn('历史分钟线不可用',e);setChartDay(day);setStatus(`分钟线加载失败：${e.message}；请稍后重试。`,'error');return;}}
   setChartDay(day);setStatus(state.chart.length?`${day} 的历史分时已加载，共 ${state.chart.length} 个点。`:`${day} 没有可用历史分钟数据；这一天可能超出接口保留范围。`,state.chart.length?'ok':'');
 }
-function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){tickDateBegin(day);clearChartSelection();}state.chartDate=day;$('chartDate').value=day;state.chart=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day));drawChart();updateQuoteHeader();tickDateEnd(day);const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分钟线（并叠加实时采样）':'历史分钟线'}，共 ${count} 个点。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
-function addPoint(q){if(!q.time||q.time.slice(0,8)!==dayShanghai().replaceAll('-',''))return false;const day=q.time.slice(0,4)+'-'+q.time.slice(4,6)+'-'+q.time.slice(6,8),seconds=q.time.length>=14?q.time.slice(12,14):'00',hands=volumeToHand(q.volume_raw,state.symbol,q.low,q.high,q.amount_wan).hands,amountWan=Number(q.amount_wan),point={time:`${day} ${q.time.slice(8,10)}:${q.time.slice(10,12)}:${seconds}`,price:q.current,volume_hand:hands,amount_wan:Number.isFinite(amountWan)?amountWan:null,amount:Number.isFinite(amountWan)?amountWan*10000:null,isLive:true};state.quote=q;const merged=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day),[point]);storeChart(state.code,day,merged);if(state.chartDate===day){state.chart=merged;drawChart();updateQuoteHeader();setChartDay(day);}state.quote=q;upsertTodayRow(q);return true;}
+function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){tickDateBegin(day);clearChartSelection();}state.chartDate=day;$('chartDate').value=day;state.chart=chartDisplayPoints(day,mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day)));drawChart();updateQuoteHeader();tickDateEnd(day);const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分钟线（并叠加实时采样）':'历史分钟线'}，共 ${count} 个点。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
+function addPoint(q){if(!q.time||q.time.slice(0,8)!==dayShanghai().replaceAll('-',''))return false;const day=q.time.slice(0,4)+'-'+q.time.slice(4,6)+'-'+q.time.slice(6,8),seconds=q.time.length>=14?q.time.slice(12,14):'00',hands=volumeToHand(q.volume_raw,state.symbol,q.low,q.high,q.amount_wan).hands,amountWan=Number(q.amount_wan),point={time:`${day} ${q.time.slice(8,10)}:${q.time.slice(10,12)}:${seconds}`,price:q.current,volume_hand:hands,amount_wan:Number.isFinite(amountWan)?amountWan:null,amount:Number.isFinite(amountWan)?amountWan*10000:null,isLive:true};state.quote=q;const merged=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day),[point]);storeChart(state.code,day,merged);if(state.chartDate===day){state.chart=chartDisplayPoints(day,merged);drawChart();updateQuoteHeader();setChartDay(day);}state.quote=q;upsertTodayRow(q);return true;}
 function drawChart(){
   const svg=$('chart');svg.replaceChildren();const pts=state.chart;
   if(!pts.length){state.chartGeometry=null;const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('x','500');t.setAttribute('y','215');t.setAttribute('text-anchor','middle');t.setAttribute('fill','#78869b');t.textContent='该日暂无可用分时数据';svg.appendChild(t);resetChartPointInfo();return;}
