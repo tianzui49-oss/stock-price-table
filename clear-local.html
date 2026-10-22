@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>清空本浏览器全部股票的本地记录</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#182536;background:#f4f6f9;line-height:1.7}*{box-sizing:border-box}body{margin:0;padding:28px 18px}main{max-width:640px;margin:auto;background:white;padding:26px;border:1px solid #dce2ea;border-radius:14px}h1{font-size:24px;line-height:1.4;margin:0 0 20px}h2{font-size:17px;margin:20px 0 6px}p{margin:10px 0}ul{padding-left:22px;margin:8px 0}.warning{padding:14px;background:#fff4ed;border-left:4px solid #bc371d}.keep{color:#176343}button{width:100%;margin:18px 0 8px;padding:15px 12px;border:0;border-radius:9px;background:#b72c24;color:white;font:700 17px/1.5 system-ui;cursor:pointer}button:disabled{opacity:.55;cursor:default}button:focus-visible,a:focus-visible{outline:3px solid #225bc1;outline-offset:4px}#status{white-space:pre-line;padding:12px;background:#eef2f7;border-radius:8px;overflow-wrap:anywhere}a{color:#1453a0}.small{font-size:14px;color:#536174}[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>清空本浏览器全部股票的本地记录</h1>
+<p class="warning"><strong>永久删除，无法撤销。</strong>仅影响当前浏览器／用户配置中，本行情网站保存的全部股票记录；不会清除其他设备或其他浏览器中的数据。</p>
+<h2>将清除所有股票的</h2>
+<ul><li>原始逐笔成交（ticks）与五档盘口快照</li><li>采集会话、统计历史与最新采集记录</li><li>各股票、各日期的图表缓存</li><li>最后保存的有效五档深度快照</li></ul>
+<p class="keep"><strong>保留：</strong>自选股列表、查询历史和其他设置；不清除其他网站数据。</p>
+<h2>操作前请先做这两步</h2>
+<p>1. 使用原来查看行情的<strong>同一个浏览器、同一个用户配置</strong>打开本页，不要使用无痕窗口，也不要换成聊天内置浏览器。若原来就是聊天内置浏览器，则仍在原来的浏览器环境中操作。</p>
+<p>2. <strong>关闭其他所有行情页面／窗口</strong>，只保留本清理页，避免旧页面继续采集或把内存中的旧缓存写回。必要时先在行情页暂停全部采集，再关闭它。</p>
+<p class="small">打开本页不会清除任何记录。只有点击下面的按钮才会执行。</p>
+<button id="clearButton" type="button" aria-describedby="status">永久清空全部股票本地行情记录（保留自选和查询历史）</button>
+<p id="status" role="status" aria-live="polite" aria-atomic="true">尚未执行清理。</p>
+<p id="nextStep" hidden><a href="/">重新打开行情页，开始新的采集</a><br><span class="small">从空白记录重新开始；若此前暂停了采集，请按需恢复。旧的本地历史无法通过本页找回。</span></p>
+<noscript><p>本页需要 JavaScript 才能清理。当前尚未执行任何清理。</p></noscript>
+</main>
+<script>
+'use strict';
+(() => {
+  const DB_NAME = 'thsdk-orderbook-recorder-v1';
+  const STORES = ['events', 'ticks', 'latest'];
+  const PREFIXES = ['stock-chart-', 'thsdk-last-valid-depth-v1:'];
+  const button = document.getElementById('clearButton');
+  const status = document.getElementById('status');
+  const nextStep = document.getElementById('nextStep');
+  const isMarketKey = key => PREFIXES.some(prefix => key.startsWith(prefix));
+  let running = false;
+
+  function openExistingDatabase() {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let absent = false;
+      const request = indexedDB.open(DB_NAME);
+      const finish = (error, db) => {
+        if (settled) { if (db) db.close(); return; }
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error); else resolve(db);
+      };
+      const timer = setTimeout(() => finish(new Error('数据库暂时被占用。请关闭其他行情页面后重试。')), 15000);
+      request.onupgradeneeded = event => {
+        // A missing database must stay missing. Never create or upgrade a schema.
+        absent = event.oldVersion === 0;
+        request.transaction.abort();
+      };
+      request.onblocked = () => {
+        status.textContent = '等待数据库访问；请关闭其他行情页面。尚未报告清理成功。';
+      };
+      request.onerror = () => finish(absent ? null : (request.error || new Error('无法打开本地数据库。')), null);
+      request.onsuccess = () => finish(null, request.result);
+    });
+  }
+
+  function clearStores(db) {
+    return new Promise((resolve, reject) => {
+      const names = STORES.filter(name => db.objectStoreNames.contains(name));
+      if (!names.length) { resolve([]); return; }
+      const tx = db.transaction(names, 'readwrite');
+      tx.oncomplete = () => resolve(names);
+      tx.onabort = () => reject(tx.error || new Error('数据库清理未提交，请重试。'));
+      // All targeted stores are cleared atomically. Other stores are untouched.
+      for (const name of names) tx.objectStore(name).clear();
+    });
+  }
+
+  function verifyStores(db, names) {
+    return new Promise((resolve, reject) => {
+      if (!names.length) { resolve(); return; }
+      const tx = db.transaction(names, 'readonly');
+      let remaining = 0;
+      for (const name of names) {
+        const request = tx.objectStore(name).count();
+        request.onsuccess = () => { remaining += request.result; };
+      }
+      tx.oncomplete = () => remaining === 0 ? resolve() : reject(new Error('检测到行情记录被再次写入。请关闭其他行情页面后重新清理。'));
+      tx.onabort = () => reject(tx.error || new Error('无法核验数据库清理结果。'));
+    });
+  }
+
+  button.addEventListener('click', async () => {
+    if (running) return;
+    running = true;
+    button.disabled = true;
+    nextStep.hidden = true;
+    status.textContent = '正在清理并核验本浏览器的行情记录，请勿关闭本页……';
+    let db = null;
+    try {
+      if (location.origin !== 'https://tianzui49-oss.github.io') throw new Error('请从原网站 https://tianzui49-oss.github.io/clear-local.html 打开此页。');
+      if (!window.indexedDB) throw new Error('当前浏览器无法访问 IndexedDB，尚未完成清理。');
+      // Access localStorage before deleting anything to catch disabled storage early.
+      const storage = window.localStorage;
+      const keys = [];
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key !== null && isMarketKey(key)) keys.push(key);
+      }
+      db = await openExistingDatabase();
+      const names = db ? await clearStores(db) : [];
+      for (const key of keys) storage.removeItem(key);
+      if (db) await verifyStores(db, names);
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key !== null && isMarketKey(key)) throw new Error('行情缓存仍存在或被再次写入。请关闭其他行情页面后重新清理。');
+      }
+      status.textContent = '清理完成：已核验本浏览器中全部股票的原始逐笔、五档快照、会话／统计历史、图表缓存和最后保存的深度快照已清空（原本不存在的记录保持为空）。\n自选股列表、查询历史和其他设置保持不变。请重新打开行情页，开始新的采集；不要恢复仍在运行的旧行情页面。';
+      nextStep.hidden = false;
+      button.textContent = '清理完成';
+    } catch (error) {
+      status.textContent = '未能确认全部清理完成：' + (error && error.message ? error.message : String(error)) + '\n部分记录可能已经清除。请关闭其他行情页后重试；只有显示“清理完成”才表示核验通过。';
+      button.disabled = false;
+    } finally {
+      if (db) db.close();
+      running = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
