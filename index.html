@@ -772,9 +772,29 @@ const BookRecordingSession = (() => {
     if (Number.isFinite(reset)) start = reset;
     const ids = new Set(s.session_ids || []); if (s.id) ids.add(s.id);
     for (const e of events) if (e.session_id && (!Number.isFinite(start) || ms(e.received_at) >= start)) ids.add(e.session_id);
-    return { ...s, started_at: Number.isFinite(start) ? new Date(start).toISOString() : s.started_at, session_ids: [...ids].sort(), daily_merge: true, ...(Number.isFinite(reset) ? { manual_reset_at: new Date(reset).toISOString() } : {}) };
+    // Source-time eligibility is limited to actual saved recording segments, never the full day.
+    const spans = new Map(), seenSessions = new Set();
+    for (const e of [...events].sort((a,b) => ms(a.received_at)-ms(b.received_at))) {
+      if (!e.session_id || !ids.has(e.session_id) || !['stats_start','stats_resume','depth','tick_response'].includes(e.kind)) continue;
+      const at = ms(e.received_at); if (Number.isFinite(start) && at < start) continue;
+      const key = JSON.stringify([e.session_id, e.segment_id || 'legacy']);
+      if (!spans.has(key)) {
+        let lo = at;
+        if (e.kind === 'stats_start') { const t = ms(e.session?.started_at); if (Number.isFinite(t) && day(t) === target) lo = t; }
+        else if (e.kind !== 'stats_resume' && !seenSessions.has(e.session_id) && e.session_id === s.id && Number.isFinite(ms(s.started_at))) lo = Math.min(lo, ms(s.started_at));
+        spans.set(key, { start: Math.max(lo, Number.isFinite(start) ? start : lo), end: null });
+      }
+      seenSessions.add(e.session_id);
+      if (e.kind === 'depth' || e.kind === 'tick_response') spans.get(key).end = at;
+    }
+    const recording_intervals = [...spans.values()].filter(x => x.end !== null && x.end >= x.start).map(x => ({ start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString() })).sort((a,b) => ms(a.start)-ms(b.start));
+    return { ...s, started_at: Number.isFinite(start) ? new Date(start).toISOString() : s.started_at, session_ids: [...ids].sort(), recording_intervals, daily_merge: true, ...(Number.isFinite(reset) ? { manual_reset_at: new Date(reset).toISOString() } : {}) };
   }
-  return { resolve };
+  function tradeRecorded(sourceTime, session) {
+    if (!Array.isArray(session?.recording_intervals)) return true;
+    return session.recording_intervals.some(x => sourceTime >= ms(x.start) && sourceTime <= ms(x.end));
+  }
+  return { resolve, tradeRecorded };
 })();
 
 /* Live, revisable three-second buckets, not a settlement timer; trade direction stays neutral. */
@@ -850,7 +870,7 @@ const BookThreeSecondCalculator = (() => {
     for (const [w, ps] of groups) if (ps.some((p, i) => i > 0 && p.t0 !== ps[i - 1].t1)) { groups.delete(w); excluded.push({ start: iso(w), end: iso(w + 3000), reason: 'discontinuous_window', __at: w + 3000 }); }
     const sourceClock = events.reduce((n, e) => Math.max(n, e.__t), 0);
     const seenTickIds = new Set();
-    const ts = (Array.isArray(inputTicks) ? inputTicks : []).filter(t => !code || t.code === code).map((t, i) => ({ raw: t, __i: i, __recv: ms(t.first_received_at), __trade: ms(t.row?.time) })).filter(t => { if (t.raw.id == null) return true; if (seenTickIds.has(t.raw.id)) return false; seenTickIds.add(t.raw.id); return true; }).filter(t => Number.isFinite(t.__recv) && t.__recv <= cutoff && Number.isFinite(t.__trade) && t.__trade <= Math.min(cutoff, Math.max(t.__recv, sourceClock)) && (!Number.isFinite(sessionStart) || (t.__trade >= sessionStart && t.__recv >= sessionStart)) && (!targetDay || day(t.__trade) === targetDay) && t.raw.row && Number.isFinite(N(t.raw.row.price)) && t.raw.row.volume !== null && t.raw.row.volume !== '' && typeof t.raw.row.volume !== 'boolean' && Number.isSafeInteger(N(t.raw.row.volume)) && N(t.raw.row.volume) >= 0).sort((a, b) => a.__recv - b.__recv || a.__i - b.__i);
+    const ts = (Array.isArray(inputTicks) ? inputTicks : []).filter(t => !code || t.code === code).map((t, i) => ({ raw: t, __i: i, __recv: ms(t.first_received_at), __trade: ms(t.row?.time) })).filter(t => { if (t.raw.id == null) return true; if (seenTickIds.has(t.raw.id)) return false; seenTickIds.add(t.raw.id); return true; }).filter(t => Number.isFinite(t.__recv) && t.__recv <= cutoff && Number.isFinite(t.__trade) && t.__trade <= Math.min(cutoff, Math.max(t.__recv, sourceClock)) && (!Number.isFinite(sessionStart) || (t.__trade >= sessionStart && t.__recv >= sessionStart)) && (!targetDay || day(t.__trade) === targetDay) && (typeof BookRecordingSession === 'undefined' || BookRecordingSession.tradeRecorded(t.__trade, s)) && t.raw.row && Number.isFinite(N(t.raw.row.price)) && t.raw.row.volume !== null && t.raw.row.volume !== '' && typeof t.raw.row.volume !== 'boolean' && Number.isSafeInteger(N(t.raw.row.volume)) && N(t.raw.row.volume) >= 0).sort((a, b) => a.__recv - b.__recv || a.__i - b.__i);
     const ticksByWindow = new Map(); for (const t of ts) { const w = Math.floor(t.__trade / 3000) * 3000; if (!ticksByWindow.has(w)) ticksByWindow.set(w, []); ticksByWindow.get(w).push(t); }
     // Rebuild each bucket from everything received so far. A late trade revises its old bucket
     // and every later cumulative total; book-only updates never wait for a trade response.
@@ -931,7 +951,7 @@ const BookStatisticsAudit = (() => {
     const available=t=>Number.isFinite(t)&&(!Number.isFinite(asOf)||t<=asOf);
     const ev=(Array.isArray(inputEvents)?inputEvents:[]).filter(e=>e&&sessionIds.has(e.session_id)&&(!code||!e.code||e.code===code)&&(!s.day||(Number.isFinite(ms(e.received_at))&&new Date(ms(e.received_at)+8*3600000).toISOString().slice(0,10)===s.day))).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>available(e.__t)&&(!Number.isFinite(sessionStart)||e.__t>=sessionStart)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
     const depths=ev.filter(e=>e.kind==='depth'), idx=depths.map(e=>e.__t), ticksByWindow=new Map();
-    for(const [i,t] of (Array.isArray(inputTicks)?inputTicks:[]).entries()) { if(t?.id!=null){if(seen.has(t.id))continue;seen.add(t.id);} const recv=ms(t?.first_received_at), trade=ms(t?.row?.time), vol=t?.row?.volume; if((!code||t.code===code)&&available(recv)&&Number.isFinite(trade)&&trade<=asOf&&(!Number.isFinite(sessionStart)||(trade>=sessionStart&&recv>=sessionStart))&&(!s.day||new Date(trade+8*3600000).toISOString().slice(0,10)===s.day)&&Number.isFinite(N(t?.row?.price))&&share(vol)){const w=Math.floor(trade/3000)*3000;if(!ticksByWindow.has(w))ticksByWindow.set(w,[]);ticksByWindow.get(w).push({t,recv,trade,vol:N(vol),i});} }
+    for(const [i,t] of (Array.isArray(inputTicks)?inputTicks:[]).entries()) { if(t?.id!=null){if(seen.has(t.id))continue;seen.add(t.id);} const recv=ms(t?.first_received_at), trade=ms(t?.row?.time), vol=t?.row?.volume; if((!code||t.code===code)&&available(recv)&&Number.isFinite(trade)&&trade<=asOf&&(!Number.isFinite(sessionStart)||(trade>=sessionStart&&recv>=sessionStart))&&(!s.day||new Date(trade+8*3600000).toISOString().slice(0,10)===s.day)&&(typeof BookRecordingSession==='undefined'||BookRecordingSession.tradeRecorded(trade,s))&&Number.isFinite(N(t?.row?.price))&&share(vol)){const w=Math.floor(trade/3000)*3000;if(!ticksByWindow.has(w))ticksByWindow.set(w,[]);ticksByWindow.get(w).push({t,recv,trade,vol:N(vol),i});} }
     const top=Array.isArray(result?.windows)?result.windows:[], timeline=Array.isArray(result?.timeline)?result.timeline:[], cumulative={bid:metric(),ask:metric()}, out=[]; let cumulativeIncomplete=false;
     const addCum=raw=>{for(const side of sides)for(const k of Object.keys(metric()))cumulative[side][k]+=raw[side][k];};
     const validShareField=(obj,k)=>share(obj?.[k]);
@@ -1032,7 +1052,7 @@ const bookRecorder = (() => {
   function renderThreeSecond(result,cutoff,snapshot=null,clear=false){
     const entries=clear?[]:(result?.windows||[]).filter(w=>Date.parse(w.confirmed_at)<=cutoff);
     $('bookAdditionAt').textContent=snapshot?`${viewTime?'截至所选时刻':'最新累计'}｜盘口已更新至 ${tickSourceTime(snapshot.through)}。`:'等待可比较的盘口快照。';
-    $('bookThreeSource').textContent=snapshot?`会话启动后按源时间累计的已收共同成交量 ${fmtLots(snapshot.source_trade_volume_shares)} 手（买卖两侧共用一份，非全天；包含无可比盘口窗口）。主动成交方向未知，不做分侧抵扣。`:'成交量只列一份，不推断主动买卖方向，不分配到盘口侧。';
+    $('bookThreeSource').textContent=snapshot?`从当天首次录制起、仅实际录制片段内的已收共同成交量 ${fmtLots(snapshot.source_trade_volume_shares)} 手（买卖两侧共用一份；非全天总量，排除启动前及关页空档；无可比盘口但已录到的成交仍计入）。主动成交方向未知，不做分侧抵扣。`:'成交量只列一份，不推断主动买卖方向，不分配到盘口侧。';
     for(const [side,suffix,label]of[['bid','Bid','买盘'],['ask','Ask','卖盘']]){const m=snapshot?.[side];$('book'+suffix+'Addition').textContent=`${label}累计增加 / 成交比：${fmtTradeRate(m?.addition_rate_pct,m?.denominator_trade_shares)}`;$('book'+suffix+'AdditionDetail').textContent=m?`观察增加 ${fmtLots(m.added_shares)} 手；观察减少 ${fmtLots(m.observed_reduction_shares)} 手；净变化 ${fmtLots(m.net_change_shares)} 手；共同成交分母 ${fmtLots(m.denominator_trade_shares)} 手。`:'';}
     $('bookThreeSummary').textContent=`实时更新 ${entries.length} 个3秒归档窗口（未结束窗口也展示，迟到数据继续修订），显示最近60个，其余可完整导出。盘口侧直接来自五档；同价在五档内、进入、移出状态见下方价位明细。`;
     const visible=[...entries].reverse().slice(0,60),key=JSON.stringify([sessions.get(state.code)?.id,visible]);if(!clear&&key===threeRenderKey)return;threeRenderKey=key;
@@ -1282,7 +1302,7 @@ const bookRecorder = (() => {
         for(const point of result?.timeline||[])for(const side of ['bid','ask']){const m=point[side];rows.push([code,sessions.get(code)?.started_at,point.at,point.through,side,m.added_shares,m.observed_reduction_shares,m.net_change_shares,m.denominator_trade_shares,m.addition_rate_pct,m.reduction_rate_pct,point.confirmed_intervals,point.excluded_intervals,'无法确认','未进行']);}
         download(`${code}_方向中立累计统计_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else {
-        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:9,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'只识别盘口side；不确认主动成交方向，不把同价成交分配到任一挂单侧，不估算撤单量或撤单率。可见增加、减少不等于完整逐笔委托流。仅统计会话启动后源时间的已返回成交；无可比盘口窗口的成交仍计入共同分母。缺口不等于零成交或零盘口变化；普通聚合源无稳定唯一ID，同指纹及出现次数去重无法区分源修订或完全相同的独立成交，不保证交易所全量捕获。',calculation:{version:9,denominator_scope:'session_source_returned_rows_once_including_book_gaps',window_ms:3000,confirmed_at_semantics:'兼容字段，表示本次已收数据截至时间，不表示封窗；timeline为当前版本按窗口顺序累计，非不可变发布历史',trade_attribution:'not_performed',reduction_ratio:'observed_reduction_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:0,update_mode:'every_received_response_with_late_backfill',time_basis:'盘口后帧收到时间与成交源时间归档；历史选点仅按当时已收到的数据重算；窗口永不因首次展示而封账'},session:sessions.get(code),statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
+        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:9,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'只识别盘口side；不确认主动成交方向，不把同价成交分配到任一挂单侧，不估算撤单量或撤单率。可见增加、减少不等于完整逐笔委托流。仅统计会话启动后源时间的已返回成交；无可比盘口窗口的成交仍计入共同分母。缺口不等于零成交或零盘口变化；普通聚合源无稳定唯一ID，同指纹及出现次数去重无法区分源修订或完全相同的独立成交，不保证交易所全量捕获。',calculation:{version:10,denominator_scope:'recorded_segments_source_rows_once_excluding_prestart_and_closed_gaps',window_ms:3000,confirmed_at_semantics:'兼容字段，表示本次已收数据截至时间，不表示封窗；timeline为当前版本按窗口顺序累计，非不可变发布历史',trade_attribution:'not_performed',reduction_ratio:'observed_reduction_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:0,update_mode:'every_received_response_with_late_backfill',time_basis:'盘口后帧收到时间与成交源时间归档；历史选点仅按当时已收到的数据重算；窗口永不因首次展示而封账'},session:sessions.get(code),statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
       }
     } catch (e) { $('bookRecordStatus').textContent = '导出失败：' + e.message; }
   }
