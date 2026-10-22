@@ -1190,9 +1190,10 @@ const bookRecorder = (() => {
     await queue;watchlist.render();await refresh();
     if(collectors.get(code)===job&&job.ready)void poll(code,true);
   }
-  async function begin(code,startedAt=stamp(),reset=true){
+  async function begin(code,startedAt=stamp(),reset=false){
     activeCode=code;viewTime=null;stopped=false;
-    if(reset||!collectors.has(code))await start(code,startedAt,reset);
+    const nextDay=sessions.has(code)&&sessions.get(code).day!==beijingDay(startedAt);
+    if(reset||nextDay||!collectors.has(code))await start(code,startedAt,reset||nextDay);
     syncWatchlist();if(!collectors.get(code)?.ready)await queue;
     await refresh();watchlist.render();
   }
