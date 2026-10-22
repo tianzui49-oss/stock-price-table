@@ -184,8 +184,8 @@ test('all five prices on both sides settle even when only one price trades',()=>
   const r=calculate(e,[tick(t(2,500),t(2),5,'one',100),tick(t(2,500),t(2),7,'out',110)]),w=r.windows[0];
   assert.equal(w.levels.length,10);assert.equal(w.bid.added_shares,50);assert.equal(w.bid.cancellation_shares,35);assert.equal(w.bid.net_change_shares,15);assert.equal(w.ask.added_shares,50);assert.equal(w.ask.cancellation_shares,40);assert.equal(w.ask.net_change_shares,10);assert.equal(w.bid.denominator_trade_shares,12);assert.equal(w.bid.net_addition_rate_pct,125);
 });
-test('trade exceeding observed reduction stays a net-only cancellation-side adjustment',()=>{
-  const r=calculate([depth(t(0)),depth(t(1),{'bid:100':98})],[tick(t(1,500),t(1),9)]),w=r.windows[0];assert.equal(w.bid.added_shares,0);assert.equal(w.bid.cancellation_shares,0);assert.equal(w.bid.cancellation_adjustment_shares,-7);assert.equal(w.bid.net_change_shares,7);
+test('trade exceeding observed reduction transfers the excess into additions',()=>{
+  const r=calculate([depth(t(0)),depth(t(1),{'bid:100':98})],[tick(t(1,500),t(1),9)]),w=r.windows[0];assert.equal(w.bid.added_shares,7);assert.equal(w.bid.cancellation_shares,0);assert.equal(w.bid.net_change_shares,7);
 });
 test('actual level shift follows same price and excludes entered/left boundary volumes',()=>{
  const first=depth(t(0)), second=depth(t(1));second.payload.rows=second.payload.rows.filter(r=>r.side!=='bid');second.payload.rows.push(...[99,98,97,96,95].map((p,i)=>({side:'bid',price:p,level:i+1,volume:p===99?107:100})));
@@ -201,5 +201,5 @@ test('independent audit matches raw records and detects altered aggregate',()=>{
 
 test('each update adds to cumulative numerators/denominator; negative net rate is preserved',()=>{
  const e=[depth(t(0)),depth(t(1),{'bid:100':90}),{...tickResponse(t(1,500)),row_count:1},depth(t(2),{'bid:100':88}),{...tickResponse(t(2,500)),row_count:1}],ticks=[tick(t(1,500),t(1),3,'first'),tick(t(2,500),t(2),5,'second')];
- const r=calculate(e,ticks);assert.equal(r.windows.length,2);assert.equal(r.windows[0].bid.net_change_shares,-7);assert.equal(r.windows[1].bid.added_shares,0);const last=r.timeline.at(-1).bid;assert.equal(last.added_shares,0);assert.equal(last.cancellation_adjustment_shares,-3);assert.equal(last.cancellation_shares,7);assert.equal(last.net_change_shares,-4);assert.equal(last.denominator_trade_shares,8);assert.equal(last.addition_rate_pct,0);assert.equal(last.reduction_rate_pct,87.5);assert.equal(last.net_addition_rate_pct,-50);
+ const r=calculate(e,ticks);assert.equal(r.windows.length,2);assert.equal(r.windows[0].bid.net_change_shares,-7);assert.equal(r.windows[1].bid.added_shares,3);const last=r.timeline.at(-1).bid;assert.equal(last.added_shares,3);assert.equal(last.cancellation_shares,7);assert.equal(last.net_change_shares,-4);assert.equal(last.denominator_trade_shares,8);assert.equal(last.addition_rate_pct,37.5);assert.equal(last.reduction_rate_pct,87.5);assert.equal(last.net_addition_rate_pct,-50);
 });
