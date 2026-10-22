@@ -609,7 +609,7 @@ function tickRenderRowStats(rows=[],counts){
 function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary();tickRenderRowStats(); }
 function tickStop(){bookRecorder.pause();depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
 function tickReset(){tickStop();tickState.key='';tickState.cache.clear();tickState.loadingDay='';tickState.viewRows=[];tickClear();depthReset();$('thsdkStockLabel').textContent='正在查询…';$('thsdkStatus').textContent='等待加载成交明细。';}
-function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(document.hidden||!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
+function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
 function tickQuery(){
   if(!/^\d{6}$/.test(state.code)||tickState.loadingDay)return null;
   const pastDay=state.chartDate&&state.chartDate!==dayShanghai(),selected=hoveredPointTime||(pastDay?(state.chart.at(-1)?.time||`${state.chartDate} 15:00:00`):null);
@@ -752,7 +752,7 @@ function depthSync(force=false,manual=false){
     depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
   }).catch(()=>{if(generation===depthState.generation&&code===state.code)depthShow('读取失败，请稍后重试。');}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}depthShow();});
 }
-/* Fixed three-second received-time book-flow estimator; trade direction is intentionally neutral. */
+/* Live, revisable three-second buckets, not a settlement timer; trade direction stays neutral. */
 const BookThreeSecondCalculator = (() => {
   const N = v => typeof v === 'number' ? v : Number(v);
   const ms = v => { if (typeof v === 'number') return v < 2e11 ? v * 1000 : v; const x = Date.parse(v); return Number.isFinite(x) ? x : NaN; };
@@ -779,11 +779,11 @@ const BookThreeSecondCalculator = (() => {
 
   const empty = () => ({ added_shares: 0, observed_reduction_shares: 0, reduction_shares: 0, net_change_shares: 0, denominator_trade_shares: 0, addition_rate_pct: null, reduction_rate_pct: null, rate_pct: null, trade_credit_shares: null, unexplained_shares: null, unknown_shares: 0, baseline_shares: 0 });
   const finish = m => { const d = m.denominator_trade_shares; m.addition_rate_pct = d > 0 ? m.added_shares / d * 100 : null; m.reduction_rate_pct = d > 0 ? m.observed_reduction_shares / d * 100 : null; m.rate_pct = null; m.trade_credit_shares = null; m.unexplained_shares = null; m.unknown_shares = m.observed_reduction_shares; m.reduction_shares = m.observed_reduction_shares; m.net_change_shares = m.added_shares - m.observed_reduction_shares; return m; };
-  function coverage(r, t0, t1, d) { const b = r.payload_metadata?.bounds || {}, rt = ms(r.received_at); if (!Number.isFinite(rt) || rt < t1 + 10000) return false; if (b.mode === 'available-day') return b.day === d; if (b.mode === 'minute') { const lo = local(b.start), hi = local(b.end); return Number.isFinite(lo) && Number.isFinite(hi) && lo <= t0 && hi >= t1; } return false; }
+  function coverage(r, t0, t1, d) { const b = r.payload_metadata?.bounds || {}, rt = ms(r.received_at); if (!Number.isFinite(rt) || rt < t1) return false; if (b.mode === 'available-day') return b.day === d; if (b.mode === 'minute') { const lo = local(b.start), hi = local(b.end); return Number.isFinite(lo) && Number.isFinite(hi) && lo <= t0 && hi >= t1; } return false; }
 
-  function calculate(inputEvents, inputTicks, session) {
+  function calculate(inputEvents, inputTicks, session, cutoff = Infinity) {
     const s = session || {}, sid = s.id, code = s.code, targetDay = s.day;
-    const events = (Array.isArray(inputEvents) ? inputEvents : []).filter(e => e && e.session_id === sid).map((e, i) => ({ ...e, __i: i, __t: ms(e.received_at) })).filter(e => Number.isFinite(e.__t)).sort((a, b) => a.__t - b.__t || a.__i - b.__i);
+    const events = (Array.isArray(inputEvents) ? inputEvents : []).filter(e => e && e.session_id === sid).map((e, i) => ({ ...e, __i: i, __t: ms(e.received_at) })).filter(e => Number.isFinite(e.__t) && e.__t <= cutoff).sort((a, b) => a.__t - b.__t || a.__i - b.__i);
     const depths = events.filter(e => e.kind === 'depth'), responses = events.filter(e => e.kind === 'tick_response');
     const snapshots = [], excluded = [], pairs = [], boundary = []; let prev = null, lastDepth = null, baseline = { bid: null, ask: null }, baselineReady = false;
     for (const e of depths) {
@@ -803,14 +803,36 @@ const BookThreeSecondCalculator = (() => {
       }
       pairs.push({ t0: prev.e.__t, t1: e.__t, old: prev.q, new: q, by: sides, win: Math.floor(e.__t / 3000) * 3000 }); prev = { e, q, ph };
     }
+    const visibilityChanges = [], visibilityByPair = new Map();
+    for (const p of pairs) for (const side of ['bid', 'ask']) {
+      const before = new Map(p.old.a[side].map(x => [x.price, x])), after = new Map(p.new.a[side].map(x => [x.price, x]));
+      for (const price of new Set([...before.keys(), ...after.keys()])) {
+        const b = before.get(price), a = after.get(price);
+        let state, label;
+        if (b && a) { if (b.shares === a.shares) continue; state = 'in_five_same_price'; label = '同价位仍在五档内'; }
+        else if (!b && a) { state = 'entered_five'; label = '进入五档'; }
+        else if (b && !a) { state = 'left_five'; label = '移出五档（外部余量未知）'; }
+        else continue;
+        const beforeShares = b ? b.shares : null, afterShares = a ? a.shares : null;
+        const delta = beforeShares !== null && afterShares !== null ? afterShares - beforeShares : null;
+        const detail = { id: `${String(sid)}:${p.t0}:${p.t1}:${side}:${price}:${state}`, side, price, before_shares: beforeShares, after_shares: afterShares, delta_shares: delta, before_level: b ? b.level : null, after_level: a ? a.level : null, visibility_state: state, visibility_label: label, interval_start: iso(p.win), interval_end: iso(p.win + 3000), source_span_start: iso(p.t0), source_span_end: iso(p.t1), confirmed_at: iso(p.t1), statistics_eligible: false, observations: [{ received_at: iso(p.t1), before_shares: beforeShares, after_shares: afterShares, delta_shares: delta }] };
+        if (!visibilityByPair.has(p)) visibilityByPair.set(p, []);
+        visibilityByPair.get(p).push(detail); visibilityChanges.push(detail);
+      }
+    }
     const groups = new Map(); for (const p of pairs) { if (!groups.has(p.win)) groups.set(p.win, []); groups.get(p.win).push(p); }
     const blocked = new Set(excluded.map(x => Math.floor(x.__at / 3000) * 3000)); for (const w of blocked) groups.delete(w);
     for (const [w, ps] of groups) if (ps.some((p, i) => i > 0 && p.t0 !== ps[i - 1].t1)) { groups.delete(w); excluded.push({ start: iso(w), end: iso(w + 3000), reason: 'discontinuous_window', __at: w + 3000 }); }
-    const ts = (Array.isArray(inputTicks) ? inputTicks : []).filter(t => !code || t.code === code).map((t, i) => ({ raw: t, __i: i, __recv: ms(t.first_received_at), __trade: ms(t.row?.time) })).filter(t => Number.isFinite(t.__recv) && Number.isFinite(t.__trade) && t.raw.row && Number.isFinite(N(t.raw.row.price)) && t.raw.row.volume !== null && t.raw.row.volume !== '' && typeof t.raw.row.volume !== 'boolean' && Number.isSafeInteger(N(t.raw.row.volume)) && N(t.raw.row.volume) >= 0).sort((a, b) => a.__recv - b.__recv || a.__i - b.__i);
+    const ts = (Array.isArray(inputTicks) ? inputTicks : []).filter(t => !code || t.code === code).map((t, i) => ({ raw: t, __i: i, __recv: ms(t.first_received_at), __trade: ms(t.row?.time) })).filter(t => Number.isFinite(t.__recv) && t.__recv <= cutoff && Number.isFinite(t.__trade) && t.raw.row && Number.isFinite(N(t.raw.row.price)) && t.raw.row.volume !== null && t.raw.row.volume !== '' && typeof t.raw.row.volume !== 'boolean' && Number.isSafeInteger(N(t.raw.row.volume)) && N(t.raw.row.volume) >= 0).sort((a, b) => a.__recv - b.__recv || a.__i - b.__i);
     const ticksByWindow = new Map(); for (const t of ts) { const w = Math.floor(t.__trade / 3000) * 3000; if (!ticksByWindow.has(w)) ticksByWindow.set(w, []); ticksByWindow.get(w).push(t); }
-    const timeline = [], reconciliation = [], cumulative = { bid: empty(), ask: empty() }, windowOut = [], visibilityChanges = []; let cumulativeSourceTrades = 0, confirmed = 0, through = 0, done = new Set(), boundaryTotal = { bid: 0, ask: 0 };
-    for (const r of responses) for (const [w, ps] of groups) {
-      if (done.has(w) || r.__t < w + 3000 + 10000 || !coverage(r, w, w + 3000, targetDay || day(w))) continue;
+    // Rebuild each bucket from everything received so far. A late trade revises its old bucket
+    // and every later cumulative total; book-only updates never wait for a trade response.
+    const asOf = ts.reduce((n, t) => Math.max(n, t.__recv), events.reduce((n, e) => Math.max(n, e.__t), 0));
+    const timeline = [], reconciliation = [], cumulative = { bid: empty(), ask: empty() }, windowOut = []; let cumulativeSourceTrades = 0, confirmed = 0, through = 0, boundaryTotal = { bid: 0, ask: 0 };
+    for (const [w, ps] of [...groups].sort((a, b) => a[0] - b[0])) {
+      const r = { __t: asOf };
+      const tradeResponse = responses.some(x => coverage(x, w, Math.min(w + 3000, asOf), targetDay || day(w)));
+      const tradeCoverage = tradeResponse ? 'response_received_not_final' : 'awaiting_coverage';
       const start = w, end = w + 3000, all = []; for (const p of ps) all.push(p.old, p.new);
       const common = { bid: new Set(all[0].a.bid.map(x => x.price)), ask: new Set(all[0].a.ask.map(x => x.price)) };
       for (const q of all.slice(1)) for (const side of ['bid', 'ask']) common[side] = new Set([...common[side]].filter(x => q.a[side].some(y => y.price === x)));
@@ -823,33 +845,19 @@ const BookThreeSecondCalculator = (() => {
         }
         const first = ps[0].old.a[side].filter(x => common[side].has(x.price)); bm[side].baseline_shares = first.reduce((z, x) => z + x.shares, 0);
       }
-      const visibilityDetails = [];
-      for (const p of ps) for (const side of ['bid', 'ask']) {
-        const before = new Map(p.old.a[side].map(x => [x.price, x])), after = new Map(p.new.a[side].map(x => [x.price, x]));
-        for (const price of new Set([...before.keys(), ...after.keys()])) {
-          const b = before.get(price), a = after.get(price);
-          let state, label;
-          if (b && a) { if (b.shares === a.shares) continue; state = 'in_five_same_price'; label = '同价位仍在五档内'; }
-          else if (!b && a) { state = 'entered_five'; label = '进入五档'; }
-          else if (b && !a) { state = 'left_five'; label = '移出五档（外部余量未知）'; }
-          else continue;
-          const beforeShares = b ? b.shares : null, afterShares = a ? a.shares : null;
-          const delta = beforeShares !== null && afterShares !== null ? afterShares - beforeShares : null;
-          const detail = { id: `${String(sid)}:${p.t0}:${p.t1}:${side}:${price}:${state}`, side, price, before_shares: beforeShares, after_shares: afterShares, delta_shares: delta, before_level: b ? b.level : null, after_level: a ? a.level : null, visibility_state: state, visibility_label: label, interval_start: iso(start), interval_end: iso(end), source_span_start: iso(p.t0), source_span_end: iso(p.t1), confirmed_at: iso(r.__t), statistics_eligible: common[side].has(price) && !!b && !!a, observations: [{ received_at: iso(p.t1), before_shares: beforeShares, after_shares: afterShares, delta_shares: delta }] };
-          visibilityDetails.push(detail); visibilityChanges.push(detail);
-        }
-      }
+      const visibilityDetails = ps.flatMap(p => visibilityByPair.get(p) || []);
+      for (const detail of visibilityDetails) detail.statistics_eligible = common[detail.side].has(detail.price) && detail.before_shares !== null && detail.after_shares !== null;
       const visibility_counts = { in_five_same_price: 0, entered_five: 0, left_five: 0 };
       for (const detail of visibilityDetails) visibility_counts[detail.visibility_state]++;
       for (const x of rows.filter(x => x.reduction_shares > 0)) { x.observed_reduction_shares = x.reduction_shares; x.reduction_shares = x.observed_reduction_shares; x.unknown_shares = x.observed_reduction_shares; x.matches = []; x.trade_credit_shares = null; x.unexplained_shares = null; x.status = 'cause_unconfirmed'; x.id = `${String(sid)}:${start}:${end}:${x.side}:${x.price}`; x.session_id = sid; x.interval_start = iso(start); x.interval_end = iso(end); x.source_span_start = iso(ps[0].t0); x.source_span_end = iso(ps[ps.length - 1].t1); x.confirmed_at = iso(r.__t); reconciliation.push(x); }
       for (const side of ['bid', 'ask']) { const mm = bm[side]; for (const x of rows.filter(z => z.side === side)) { mm.added_shares += x.added_shares; mm.observed_reduction_shares += x.reduction_shares; } mm.baseline_shares = mm.baseline_shares; finish(mm); for (const k of ['added_shares', 'observed_reduction_shares', 'reduction_shares', 'net_change_shares', 'unknown_shares']) cumulative[side][k] += mm[k]; cumulative[side].baseline_shares = baseline[side]; }
       const windowBoundary = { bid: 0, ask: 0 }; for (const b of boundary) if (b.at >= start && b.at < end) windowBoundary[b.side] += b.shares; for (const side of ['bid', 'ask']) boundaryTotal[side] += windowBoundary[side];
       const sourceTrades = (ticksByWindow.get(start) || []).filter(t => t.__recv <= r.__t), sourceVolume = sourceTrades.reduce((sum, t) => sum + N(t.raw.row.volume), 0); cumulativeSourceTrades += sourceVolume;
-      const ws = { start: iso(start), end: iso(end), confirmed_at: iso(r.__t), source_span_start: iso(Math.min(...ps.map(p => p.t0))), source_span_end: iso(Math.max(...ps.map(p => p.t1))), sampling_crosses_boundary: ps.some(p => Math.floor(p.t0 / 3000) * 3000 !== Math.floor(p.t1 / 3000) * 3000), bid: bm.bid, ask: bm.ask, boundary_shares: windowBoundary, sample_pairs: ps.length, source_trade_rows: sourceTrades.length, source_trade_records: sourceTrades.map(t => t.raw), source_trade_volume_shares: sourceVolume, buyer_executed_shares: sourceVolume, seller_executed_shares: sourceVolume, trade_attribution: 'not_performed', visibility_details: visibilityDetails, visibility_counts };
+      const ws = { start: iso(start), end: iso(end), confirmed_at: iso(r.__t), updated_at: iso(asOf), revisable: true, window_open: asOf < end, trade_coverage: tradeCoverage, source_span_start: iso(Math.min(...ps.map(p => p.t0))), source_span_end: iso(Math.max(...ps.map(p => p.t1))), sampling_crosses_boundary: ps.some(p => Math.floor(p.t0 / 3000) * 3000 !== Math.floor(p.t1 / 3000) * 3000), bid: bm.bid, ask: bm.ask, boundary_shares: windowBoundary, sample_pairs: ps.length, source_trade_rows: sourceTrades.length, source_trade_records: sourceTrades.map(t => t.raw), source_trade_volume_shares: sourceVolume, buyer_executed_shares: sourceVolume, seller_executed_shares: sourceVolume, trade_attribution: 'not_performed', visibility_details: visibilityDetails, visibility_counts };
       for (const side of ['bid', 'ask']) { bm[side].denominator_trade_shares = sourceVolume; finish(bm[side]); cumulative[side].denominator_trade_shares = cumulativeSourceTrades; finish(cumulative[side]); }
-      windowOut.push(ws); done.add(w); confirmed++; through = Math.max(through, end); timeline.push({ at: iso(r.__t), through: iso(through), source_trade_volume_shares: cumulativeSourceTrades, buyer_executed_shares: cumulativeSourceTrades, seller_executed_shares: cumulativeSourceTrades, trade_attribution: 'not_performed', bid: { ...cumulative.bid }, ask: { ...cumulative.ask }, instant: { start: iso(start), end: iso(end), bid: bm.bid, ask: bm.ask }, confirmed_intervals: confirmed, excluded_intervals: excluded.filter(x => x.__at <= r.__t).length, boundary_shares: { ...boundaryTotal } });
+      windowOut.push(ws); confirmed++; through = Math.max(through, ...ps.map(p => p.t1)); timeline.push({ at: iso(r.__t), through: iso(through), source_trade_volume_shares: cumulativeSourceTrades, buyer_executed_shares: cumulativeSourceTrades, seller_executed_shares: cumulativeSourceTrades, trade_attribution: 'not_performed', bid: { ...cumulative.bid }, ask: { ...cumulative.ask }, instant: { start: iso(start), end: iso(end), bid: bm.bid, ask: bm.ask }, confirmed_intervals: confirmed, excluded_intervals: excluded.filter(x => x.__at <= r.__t).length, boundary_shares: { ...boundaryTotal } });
     }
-    const pending = [...groups.keys()].filter(w => !done.has(w)); return { timeline, windows: windowOut, reconciliation, visibility_changes: visibilityChanges, snapshots: snapshots.length, pending_intervals: pending.length, excluded_intervals: excluded.length, last_depth_at: Number.isFinite(lastDepth) ? iso(lastDepth) : null, session_started_at: s.started_at || null };
+    const pending = windowOut.filter(w => w.trade_coverage === 'awaiting_coverage'); return { as_of: iso(asOf), calculation_mode: 'live_revisable', timeline, windows: windowOut, reconciliation, visibility_changes: visibilityChanges, snapshots: snapshots.length, pending_intervals: pending.length, excluded_intervals: excluded.length, last_depth_at: Number.isFinite(lastDepth) ? iso(lastDepth) : null, session_started_at: s.started_at || null };
   }
   return { calculate };
 })();
@@ -891,10 +899,11 @@ const BookStatisticsAudit = (() => {
   const eq=(a,b)=>a===null||b===null?a===b:Math.abs(a-b)<=1e-8;
   const rate=(quantity,volume)=>volume>0?quantity/volume*100:null;
   function calculate(inputEvents,inputTicks,session,result) {
-    const s=session||{}, sid=s.id, code=s.code;
-    const ev=(Array.isArray(inputEvents)?inputEvents:[]).filter(e=>e&&e.session_id===sid).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>Number.isFinite(e.__t)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
+    const s=session||{}, sid=s.id, code=s.code, asOf=ms(result?.as_of);
+    const available=t=>Number.isFinite(t)&&(!Number.isFinite(asOf)||t<=asOf);
+    const ev=(Array.isArray(inputEvents)?inputEvents:[]).filter(e=>e&&e.session_id===sid).map((e,i)=>({...e,__i:i,__t:ms(e.received_at)})).filter(e=>available(e.__t)).sort((a,b)=>a.__t-b.__t||a.__i-b.__i);
     const depths=ev.filter(e=>e.kind==='depth'), idx=depths.map(e=>e.__t), ticksByWindow=new Map();
-    for(const [i,t] of (Array.isArray(inputTicks)?inputTicks:[]).entries()) { const recv=ms(t?.first_received_at), trade=ms(t?.row?.time), vol=t?.row?.volume; if((!code||t.code===code)&&Number.isFinite(recv)&&Number.isFinite(trade)&&Number.isFinite(N(t?.row?.price))&&share(vol)){const w=Math.floor(trade/3000)*3000;if(!ticksByWindow.has(w))ticksByWindow.set(w,[]);ticksByWindow.get(w).push({t,recv,trade,vol:N(vol),i});} }
+    for(const [i,t] of (Array.isArray(inputTicks)?inputTicks:[]).entries()) { const recv=ms(t?.first_received_at), trade=ms(t?.row?.time), vol=t?.row?.volume; if((!code||t.code===code)&&available(recv)&&Number.isFinite(trade)&&Number.isFinite(N(t?.row?.price))&&share(vol)){const w=Math.floor(trade/3000)*3000;if(!ticksByWindow.has(w))ticksByWindow.set(w,[]);ticksByWindow.get(w).push({t,recv,trade,vol:N(vol),i});} }
     const top=Array.isArray(result?.windows)?result.windows:[], timeline=Array.isArray(result?.timeline)?result.timeline:[], cumulative={bid:metric(),ask:metric()}, out=[]; let cumulativeIncomplete=false;
     const addCum=raw=>{for(const side of sides)for(const k of Object.keys(metric()))cumulative[side][k]+=raw[side][k];};
     const validShareField=(obj,k)=>share(obj?.[k]);
@@ -906,15 +915,15 @@ const BookStatisticsAudit = (() => {
       let left=0,right=idx.length; while(left<right){const m=(left+right)>>1;if(idx[m]<lo)left=m+1;else right=m;} let rr=left; while(rr<idx.length&&idx[rr]<=hi)rr++;
       const frames=depths.slice(left,rr);
       if(frames.length<2||frames[0]?.__t!==lo||frames[frames.length-1]?.__t!==hi)mark('原始帧未精确覆盖 source_span_start/end');
-      if(frames.some(e=>e.__t<lo||e.__t>hi||e.__t>=conf))mark('原始帧超出窗口源范围或确认时间');
+      if(frames.some(e=>e.__t<lo||e.__t>hi||e.__t>conf))mark('原始帧超出窗口源范围或确认时间');
       if(!Number.isSafeInteger(w.sample_pairs)||w.sample_pairs!==Math.max(0,frames.length-1))mark('原始帧对数与窗口比较次数不一致');
       const parsed=frames.map(e=>({e,q:parse(e)})); if(parsed.some(x=>!x.q.valid))mark('原始快照不完整或五档无效');
       for(let i=1;i<parsed.length;i++){const p=parsed[i-1],c=parsed[i],gap=c.e.__t-p.e.__t,lim=Math.max(5000,N(c.e.gap_limit_ms||p.e.gap_limit_ms||5000)); if(c.e.__t<start||c.e.__t>=end)mark('原始后帧不属于当前3秒窗口'); if(c.e.segment_id!==p.e.segment_id)mark('原始快照跨 segment，连续性无效'); if(!(gap>0&&gap<=lim)||c.e.gap_warning)mark(c.e.gap_warning?'原始快照含 gap_warning':'原始快照时间不连续'); if(!sameChanges(c.e.changes,expected(p.q,c.q)))issues.push('原始 changes 与两帧逐价变动不一致');}
       const raw={bid:metric(),ask:metric(),source_trade_volume_shares:0};
       if(!incomplete){const common={bid:new Set(parsed[0].q.a.bid.map(x=>x.price)),ask:new Set(parsed[0].q.a.ask.map(x=>x.price))};for(const x of parsed)for(const side of sides)common[side]=new Set([...common[side]].filter(p=>x.q.a[side].some(y=>y.price===p)));for(let i=1;i<parsed.length;i++)for(const side of sides){const old=new Map(parsed[i-1].q.a[side].map(x=>[x.price,x.shares])),cur=new Map(parsed[i].q.a[side].map(x=>[x.price,x.shares]));for(const [p,v] of old){if(!common[side].has(p)||!cur.has(p))continue;const z=cur.get(p)-v;if(z>0)raw[side].added_shares+=z;else if(z<0)raw[side].observed_reduction_shares-=z;}}for(const side of sides){raw[side].net_change_shares=raw[side].added_shares-raw[side].observed_reduction_shares;raw[side].denominator_trade_shares=0;}}
-      const bucket=ticksByWindow.get(Math.floor((Number.isFinite(start)?start:0)/3000)*3000)||[]; for(const x of bucket)if(x.trade>=start&&x.trade<end&&x.recv<=conf)raw.source_trade_volume_shares+=x.vol; raw.bid.denominator_trade_shares=raw.source_trade_volume_shares;raw.ask.denominator_trade_shares=raw.source_trade_volume_shares;
+      const bucket=ticksByWindow.get(Math.floor((Number.isFinite(start)?start:0)/3000)*3000)||[]; for(const x of bucket)if(x.trade>=start&&x.trade<end&&available(x.recv))raw.source_trade_volume_shares+=x.vol; raw.bid.denominator_trade_shares=raw.source_trade_volume_shares;raw.ask.denominator_trade_shares=raw.source_trade_volume_shares;
       const d={bid_added_shares:null,bid_reduced_shares:null,ask_added_shares:null,ask_reduced_shares:null,source_trade_volume_shares:null};
-      const t=timeline[wi]; if(!t)mark('缺少对应 timeline 行');
+      const t=timeline[wi]; if(Number.isFinite(asOf)&&conf!==asOf)issues.push('窗口未更新至最新已收数据'); if(!t)mark('缺少对应 timeline 行');
       const expectedFields=[['bid','added_shares'],['bid','observed_reduction_shares'],['bid','net_change_shares'],['bid','denominator_trade_shares'],['ask','added_shares'],['ask','observed_reduction_shares'],['ask','net_change_shares'],['ask','denominator_trade_shares']];
       const validMetricField=(obj,k)=>k==='net_change_shares' ? (typeof obj?.[k]!=='boolean'&&obj?.[k]!==null&&obj?.[k]!==''&&Number.isSafeInteger(N(obj?.[k]))) : validShareField(obj,k);
       for(const [side,k] of expectedFields){if(!validMetricField(w[side],k))issues.push(`窗口${side}${k}不是安全整数`);if(t&&!validMetricField(t[side],k))issues.push(`累计${side}${k}不是安全整数`);}
@@ -947,7 +956,7 @@ const watchlist = (() => {
   function render(){
     const member=items.some(x=>x.code===state.code),button=$('watchlistToggle');button.disabled=!/^\d{6}$/.test(state.code);button.textContent=member?'移出自选':'加入自选';button.setAttribute('aria-pressed',String(member));
     const paused=bookRecorder.isPaused();$('watchlistPause').textContent=paused?'继续全部采集':'暂停全部采集';
-    $('watchlistStatus').textContent=storageError||`${items.length} 只自选｜${paused?'全部采集已暂停':document.hidden?'页面在后台，暂停轮询':marketPhase().open?'交易时段，按实时采样间隔采集':marketPhase().label+'，自动轮询暂停'}｜列表和记录保存在当前浏览器，不跨设备同步。`;
+    $('watchlistStatus').textContent=storageError||`${items.length} 只自选｜${paused?'全部采集已暂停':document.hidden?'后台继续尝试采集（浏览器可能节流）':marketPhase().open?'交易时段，按实时采样间隔采集':marketPhase().label+'，自动轮询暂停'}｜列表和记录保存在当前浏览器，不跨设备同步。`;
     const nextKey=JSON.stringify(items.map(item=>[item.code,item.name,bookRecorder.status(item.code)]));if(nextKey===renderKey)return;renderKey=nextKey;
     $('watchlistItems').replaceChildren(...items.map(item=>{const row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)';const open=document.createElement('button');open.className='secondary';open.textContent=`${item.name}（${item.code}）`;open.title='查看该股行情、已有记录和导出';open.addEventListener('click',()=>{$('query').value=item.code;void runQuery();});const status=document.createElement('span');status.className='small';status.style.flex='1';status.textContent=bookRecorder.status(item.code);const remove=document.createElement('button');remove.className='secondary';remove.textContent='移出';remove.setAttribute('aria-label',`移出自选 ${item.code}`);remove.addEventListener('click',()=>removeCode(item.code));row.append(open,status,remove);return row;}));
     if(!items.length){const note=document.createElement('span');note.className='small';note.textContent='暂无自选。先查询股票，再点股票名称旁的“加入自选”。';$('watchlistItems').append(note);}
@@ -967,7 +976,7 @@ const bookRecorder = (() => {
   let viewTime = null;
   const last = new Map(), knownTicks = new Map(), sessions = new Map(), segments = new Map(), caches = new Map();
   const box = document.createElement('section'); box.className='card'; box.id='bookRecorder';
-  box.innerHTML=`<div class="section-head" style="flex-wrap:wrap"><h2>实时快照明细（逐次接口返回） / 记录管理</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">查询后从启动时刻累计；同股票同日重新打开接续原会话，暂停处断开比较。自选股从打开网页时同步采集，切换股票不重置自选记录。滑动趋势图仍记录当前盘口，选点只显示当时已确认的结果。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div><p id="bookStatsDetail" class="small"></p><details><summary>方向与比率如何计算？</summary><p class="hint">买盘、卖盘由盘口 side 直接识别；比较同侧同价格的可见挂量。成交主动方向尚未可靠核实，绝不根据哪侧挂量减少来推断成交方向，不把任何成交分配给某一侧。成交量只列一份，作为两侧增加/成交比、减少/成交比的共同分母；这不是撤单率或真实加单率。成交为零时比率无法计算，但数量保留。窗口内始终可见的共同价位才计入增减；进出五档、采样缺口及竞价不强行归因。按盘口后帧收到时间归3秒窗口，成交按源时间戳归档，二者不是同步交易所事件；至少等待窗口结束10秒和覆盖时段的成交响应才确认。快照间新增与撤出可抵消，聚合成交也不是逐单委托记录。原始数据不删改。</p></details><p id="bookSnapshotCadence" class="small">下表跟随每次成功返回的盘口快照更新，不是3秒汇总。新快照曾实测中位间隔约1.77秒、最长约2.66秒；按接口返回为准，非固定每秒刷新。展示最近变化，全部记录可导出。</p><div id="bookRawChangesTable" class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>盘口侧 / 价格</th><th>上次可见挂量（手）</th><th>本次可见挂量（手）</th><th>净变化（手）</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">五档未提供交易所事件时间，读取时间不等于委托变化时间；无可靠主动方向与逐笔委托/撤单事件，撤单率无法确认。离开五档不等于挂量归零。关页、断网和后台节流会留下不可补回的五档缺口。数据保存在本浏览器，不跨设备共享，可导出备份。</p>`;
+  box.innerHTML=`<div class="section-head" style="flex-wrap:wrap"><h2>实时快照明细（逐次接口返回） / 记录管理</h2><label class="small"><input id="bookRecordEnabled" type="checkbox" checked> 随页面刷新记录</label></div><p class="small">查询后从启动时刻累计；同股票同日重新打开接续原会话，暂停处断开比较。自选股从打开网页时同步采集，切换股票不重置自选记录。滑动趋势图仍记录当前盘口，选点按当时已收到的数据重算，不使用后来数据。</p><p id="bookRecordStatus" class="small" role="status">等待查询；记录保存在本浏览器。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="bookRecordRestart" class="secondary" type="button">从现在重新统计</button><button id="bookRecordJSON" class="secondary" type="button">导出原始记录 JSON</button><button id="bookRecordCSV" class="secondary" type="button">导出五档变化 CSV</button><button id="bookStatsCSV" class="secondary" type="button">导出累计统计 CSV</button></div><p id="bookStatsDetail" class="small"></p><details><summary>方向与比率如何计算？</summary><p class="hint">买盘、卖盘由盘口 side 直接识别；比较同侧同价格的可见挂量。成交主动方向尚未可靠核实，绝不根据哪侧挂量减少来推断成交方向，不把任何成交分配给某一侧。成交量只列一份，作为两侧增加/成交比、减少/成交比的共同分母；这不是撤单率或真实加单率。成交为零时比率无法计算，但数量保留。窗口内始终可见的共同价位才计入增减；进出五档、采样缺口及竞价不强行归因。按盘口后帧收到时间归3秒窗口，成交按源时间戳归档，二者不是同步交易所事件；数据每次收到即重算，不等3秒窗口结束，也不额外等10秒；迟到成交回补原窗口和累计值。3秒仅用于归档，所有窗口均可修订，成交覆盖响应也不代表最终完整。快照间新增与撤出可抵消，聚合成交也不是逐单委托记录。原始数据不删改。</p></details><p id="bookSnapshotCadence" class="small">下表跟随每次成功返回的盘口快照更新，不是3秒汇总。默认每1秒尝试请求（可调整），同接口请求未完成时不重叠；收到并保存后立即重算各表。上游缓存、请求耗时及浏览器调度仍会产生延迟，并非交易所逐事件推送。展示最近变化，全部记录可导出。</p><div id="bookRawChangesTable" class="table-wrap" style="margin-top:12px;max-height:300px"><table style="min-width:620px"><thead><tr><th>读取时间（北京）</th><th>盘口侧 / 价格</th><th>上次可见挂量（手）</th><th>本次可见挂量（手）</th><th>净变化（手）</th></tr></thead><tbody id="bookRecordRows"></tbody></table></div><p class="hint">五档未提供交易所事件时间，读取时间不等于委托变化时间；无可靠主动方向与逐笔委托/撤单事件，撤单率无法确认。离开五档不等于挂量归零。关页、断网和后台节流会留下不可补回的五档缺口。数据保存在本浏览器，不跨设备共享，可导出备份。</p>`;
   $('thsdkTicks').after(box);
   const panel=document.createElement('div');panel.id='bookFlowPanel';panel.style.cssText='margin:10px 0;padding:12px;border:1px solid #d5dfed;border-radius:9px;background:#f7faff;line-height:1.8';
   panel.innerHTML=`<strong>可见挂量减少 / 成交比（不是撤单率）</strong><p class="small">撤单率：无法确认。盘口买卖侧已知，成交主动方向未确认；不将成交量分配给任一侧。</p><div id="bookFlowAt" class="small">查询后开始累计。</div><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:210px"><strong id="bookFlowBid">买盘累计：—</strong><div id="bookFlowBidDetail" class="small"></div></div><div style="flex:1;min-width:210px"><strong id="bookFlowAsk">卖盘累计：—</strong><div id="bookFlowAskDetail" class="small"></div></div></div><div id="bookFlowInstant" class="small"></div><div id="bookFlowCoverage" class="small"></div>`;
@@ -977,14 +986,14 @@ const bookRecorder = (() => {
   panel.after(ledgerBox);
   $('bookStatsCSV').after($('bookLedgerCSV'));
   const threePanel=document.createElement('section');threePanel.id='bookThreeSecondPanel';threePanel.style.cssText='margin:12px 0;padding:12px;border:1px solid #c9dfd3;border-radius:9px;background:#f7fcf9;line-height:1.8';
-  threePanel.innerHTML=`<h3 style="margin:0">3秒窗口汇总：买卖盘口可见挂量变化</h3><p id="bookAdditionAt" class="small"></p><p id="bookThreeSource" class="small" style="font-weight:600"></p><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:230px"><strong id="bookBidAddition">买盘累计增加 / 成交比：—</strong><div id="bookBidAdditionDetail" class="small"></div></div><div style="flex:1;min-width:230px"><strong id="bookAskAddition">卖盘累计增加 / 成交比：—</strong><div id="bookAskAdditionDetail" class="small"></div></div></div><p class="hint">同窗增加/成交比＝该侧观察增加量÷该窗成交量；减少/成交比＝该侧观察减少量÷该窗成交量。累计先合计数量再相除。零成交保留数量，比率标为无法计算；可超过100%。只比较窗口内始终可见的同侧同价位。盘口收到时间和成交源时间并非同步事件。减少含成交、撤单及快照间相互抵消等影响，不能自动叫撤单；增加也不等于完整新增委托流。</p><button id="bookThreeCSV" class="secondary" type="button">导出全部3秒窗口 CSV</button><p id="bookThreeSummary" class="small"></p><div class="table-wrap" style="max-height:360px"><table style="min-width:1450px"><thead><tr><th>3秒窗口（北京）</th><th>共同成交量（手，仅一份）</th><th>买盘增加（手）</th><th>买盘减少（手）</th><th>买盘净变化（手）</th><th>买增加/成交比</th><th>买减少/成交比</th><th>卖盘增加（手）</th><th>卖盘减少（手）</th><th>卖盘净变化（手）</th><th>卖增加/成交比</th><th>卖减少/成交比</th><th>五档可见状态（变动项数）</th><th>采样说明</th></tr></thead><tbody id="bookThreeRows"></tbody></table></div>`;
+  threePanel.innerHTML=`<h3 style="margin:0">实时汇总：买卖盘口可见挂量变化（按3秒归档）</h3><p id="bookAdditionAt" class="small"></p><p id="bookThreeSource" class="small" style="font-weight:600"></p><div style="display:flex;gap:12px 24px;flex-wrap:wrap"><div style="flex:1;min-width:230px"><strong id="bookBidAddition">买盘累计增加 / 成交比：—</strong><div id="bookBidAdditionDetail" class="small"></div></div><div style="flex:1;min-width:230px"><strong id="bookAskAddition">卖盘累计增加 / 成交比：—</strong><div id="bookAskAdditionDetail" class="small"></div></div></div><p class="hint">同窗增加/成交比＝该侧观察增加量÷该窗成交量；减少/成交比＝该侧观察减少量÷该窗成交量。累计先合计数量再相除。零成交保留数量，比率标为无法计算；可超过100%。只比较窗口内始终可见的同侧同价位。盘口收到时间和成交源时间并非同步事件。减少含成交、撤单及快照间相互抵消等影响，不能自动叫撤单；增加也不等于完整新增委托流。</p><button id="bookThreeCSV" class="secondary" type="button">导出全部3秒窗口 CSV</button><p id="bookThreeSummary" class="small"></p><div class="table-wrap" style="max-height:360px"><table style="min-width:1450px"><thead><tr><th>3秒窗口（北京）</th><th>共同成交量（手，仅一份）</th><th>买盘增加（手）</th><th>买盘减少（手）</th><th>买盘净变化（手）</th><th>买增加/成交比</th><th>买减少/成交比</th><th>卖盘增加（手）</th><th>卖盘减少（手）</th><th>卖盘净变化（手）</th><th>卖增加/成交比</th><th>卖减少/成交比</th><th>五档可见状态（变动项数）</th><th>采样说明</th></tr></thead><tbody id="bookThreeRows"></tbody></table></div>`;
   panel.after(threePanel);
   const auditPanel=document.createElement('details');auditPanel.id='bookAuditPanel';auditPanel.style.cssText='margin:12px 0;padding:12px;border:1px solid #cbd8e7;border-radius:9px;background:#fbfcff;line-height:1.8';
-  auditPanel.innerHTML=`<summary style="cursor:pointer;font-size:1.17em;font-weight:700">上下数量核对：实时快照 ↔ 3秒汇总（点击展开/收起）</summary><p class="small">从下方保存的原始快照重新按同侧、同价格及相同3秒窗口计算，再核对上方窗口增减量、成交分母和累计值；同时检查原始变化行是否与快照相符。进入、移出五档仍不按0挂量计入。差额＝上方统计−原始重算；0表示该项数量一致。</p><p id="bookAuditStatus" role="status" style="font-weight:600">等待已确认的3秒窗口。</p><p id="bookAuditCumulative" class="small"></p><div class="table-wrap" style="max-height:320px"><table style="min-width:1080px"><thead><tr><th>3秒窗口（北京）</th><th>核对状态</th><th>原始快照数 / 比较次数</th><th>买增加差（手）</th><th>买减少差（手）</th><th>卖增加差（手）</th><th>卖减少差（手）</th><th>成交量差（手）</th><th>核对说明</th></tr></thead><tbody id="bookAuditRows"></tbody></table></div><p class="hint">仅核对已确认窗口内可观测数量，不是交易所逐委托订单核销；资料不足、待确认或排除的时段不会冒充“核对一致”。滑动趋势图只展示选点之前已确认的核对结果。全部核对结果随原始记录JSON导出。</p>`;
+  auditPanel.innerHTML=`<summary style="cursor:pointer;font-size:1.17em;font-weight:700">上下数量核对：实时快照 ↔ 3秒汇总（点击展开/收起）</summary><p class="small">从下方保存的原始快照重新按同侧、同价格及相同3秒窗口计算，再核对上方窗口增减量、成交分母和累计值；同时检查原始变化行是否与快照相符。进入、移出五档仍不按0挂量计入。差额＝上方统计−原始重算；0表示该项数量一致。</p><p id="bookAuditStatus" role="status" style="font-weight:600">等待可比较的盘口快照。</p><p id="bookAuditCumulative" class="small"></p><div class="table-wrap" style="max-height:320px"><table style="min-width:1080px"><thead><tr><th>3秒窗口（北京）</th><th>核对状态</th><th>原始快照数 / 比较次数</th><th>买增加差（手）</th><th>买减少差（手）</th><th>卖增加差（手）</th><th>卖减少差（手）</th><th>成交量差（手）</th><th>核对说明</th></tr></thead><tbody id="bookAuditRows"></tbody></table></div><p class="hint">每次响应后核对当前已收数据（含未结束窗口和迟到成交），一致不代表源数据完整；仅核对可观测数量，不是交易所逐委托订单核销；资料不足、待确认或排除的时段不会冒充“核对一致”。滑动趋势图按选点之前已收到的数据重新核对。全部核对结果随原始记录JSON导出。</p>`;
   threePanel.after(auditPanel);
   function renderAudit(result,cutoff){
     const all=(result?.integrity_audit?.windows||[]).filter(w=>Date.parse(w.confirmed_at)<=cutoff),pass=all.filter(w=>w.status==='pass').length,mismatch=all.filter(w=>w.status==='mismatch').length,incomplete=all.filter(w=>w.status!=='pass'&&w.status!=='mismatch').length;
-    $('bookAuditStatus').textContent=all.length?`${viewTime?'截至所选时刻':'当前'}已核对 ${all.length} 窗：一致 ${pass} 窗，差异 ${mismatch} 窗，资料不足 ${incomplete} 窗。`:'等待已确认的3秒窗口；尚未宣称核对一致。';
+    $('bookAuditStatus').textContent=all.length?`${viewTime?'截至所选时刻':'当前'}已核对 ${all.length} 窗：一致 ${pass} 窗，差异 ${mismatch} 窗，资料不足 ${incomplete} 窗。`:'等待可比较的盘口快照；尚未宣称核对一致。';
     $('bookAuditStatus').style.color=mismatch?'#a12622':incomplete?'#805900':all.length?'#16623b':'inherit';
     const last=all.at(-1),d=last?.cumulative_delta;
     $('bookAuditCumulative').textContent=last?`同期累计差额（上层−原始重算）：买增加 ${fmtLots(d?.bid_added_shares)} 手，买减少 ${fmtLots(d?.bid_reduced_shares)} 手，卖增加 ${fmtLots(d?.ask_added_shares)} 手，卖减少 ${fmtLots(d?.ask_reduced_shares)} 手，成交 ${fmtLots(d?.source_trade_volume_shares)} 手。显示最近20窗，其余完整保留。`:'';
@@ -993,12 +1002,12 @@ const bookRecorder = (() => {
   let threeRenderKey='';
   function renderThreeSecond(result,cutoff,snapshot=null,clear=false){
     const entries=clear?[]:(result?.windows||[]).filter(w=>Date.parse(w.confirmed_at)<=cutoff);
-    $('bookAdditionAt').textContent=snapshot?`${viewTime?'截至所选时刻':'最新累计'}｜已确认至 ${tickSourceTime(snapshot.through)}。`:'等待已确认的3秒窗口。';
-    $('bookThreeSource').textContent=snapshot?`同期共同成交量 ${fmtLots(snapshot.source_trade_volume_shares)} 手（买入总量＝卖出总量；只计一份、非全天）。主动成交方向未知，不做分侧抵扣。`:'成交量只列一份，不推断主动买卖方向，不分配到盘口侧。';
+    $('bookAdditionAt').textContent=snapshot?`${viewTime?'截至所选时刻':'最新累计'}｜盘口已更新至 ${tickSourceTime(snapshot.through)}。`:'等待可比较的盘口快照。';
+    $('bookThreeSource').textContent=snapshot?`同期已收到的共同成交量 ${fmtLots(snapshot.source_trade_volume_shares)} 手（买入总量＝卖出总量；只计一份、非全天）。主动成交方向未知，不做分侧抵扣。`:'成交量只列一份，不推断主动买卖方向，不分配到盘口侧。';
     for(const [side,suffix,label]of[['bid','Bid','买盘'],['ask','Ask','卖盘']]){const m=snapshot?.[side];$('book'+suffix+'Addition').textContent=`${label}累计增加 / 成交比：${fmtTradeRate(m?.addition_rate_pct,m?.denominator_trade_shares)}`;$('book'+suffix+'AdditionDetail').textContent=m?`观察增加 ${fmtLots(m.added_shares)} 手；观察减少 ${fmtLots(m.observed_reduction_shares)} 手；净变化 ${fmtLots(m.net_change_shares)} 手；共同成交分母 ${fmtLots(m.denominator_trade_shares)} 手。`:'';}
-    $('bookThreeSummary').textContent=`已确认 ${entries.length} 个3秒窗口，显示最近60个，其余可完整导出。盘口侧直接来自五档；同价在五档内、进入、移出状态见下方价位明细。`;
-    const visible=[...entries].reverse().slice(0,60),key=JSON.stringify([sessions.get(state.code)?.id,visible.map(w=>w.start)]);if(!clear&&key===threeRenderKey)return;threeRenderKey=key;
-    $('bookThreeRows').replaceChildren(...visible.map(w=>{const tr=document.createElement('tr'),clock=t=>tickSourceTime(t).split(' ').at(-1),values=[`${clock(w.start)} → ${clock(w.end)}`,fmtLots(w.source_trade_volume_shares)];for(const side of['bid','ask']){const m=w[side];values.push(fmtLots(m.added_shares),fmtLots(m.observed_reduction_shares),fmtLots(m.net_change_shares),fmtTradeRate(m.addition_rate_pct,m.denominator_trade_shares),fmtTradeRate(m.reduction_rate_pct,m.denominator_trade_shares));}values.push(`同价仍在五档内 ${w.visibility_counts?.in_five_same_price||0} 项；进入 ${w.visibility_counts?.entered_five||0} 项；移出 ${w.visibility_counts?.left_five||0} 项`);values.push(`${w.source_trade_volume_shares===0?'零成交，数量保留；':''}${w.sample_pairs}次快照比较${w.sampling_crosses_boundary?'；有采样跨窗':''}`);for(const value of values){const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td);}tr.title=`实际快照 ${w.source_span_start} → ${w.source_span_end}；主动方向未确认，不分配成交。`;return tr;}));
+    $('bookThreeSummary').textContent=`实时更新 ${entries.length} 个3秒归档窗口（未结束窗口也展示，迟到数据继续修订），显示最近60个，其余可完整导出。盘口侧直接来自五档；同价在五档内、进入、移出状态见下方价位明细。`;
+    const visible=[...entries].reverse().slice(0,60),key=JSON.stringify([sessions.get(state.code)?.id,visible]);if(!clear&&key===threeRenderKey)return;threeRenderKey=key;
+    $('bookThreeRows').replaceChildren(...visible.map(w=>{const tr=document.createElement('tr'),clock=t=>tickSourceTime(t).split(' ').at(-1),values=[`${clock(w.start)} → ${clock(w.end)}`,fmtLots(w.source_trade_volume_shares)];for(const side of['bid','ask']){const m=w[side];values.push(fmtLots(m.added_shares),fmtLots(m.observed_reduction_shares),fmtLots(m.net_change_shares),fmtTradeRate(m.addition_rate_pct,m.denominator_trade_shares),fmtTradeRate(m.reduction_rate_pct,m.denominator_trade_shares));}values.push(`同价仍在五档内 ${w.visibility_counts?.in_five_same_price||0} 项；进入 ${w.visibility_counts?.entered_five||0} 项；移出 ${w.visibility_counts?.left_five||0} 项`);values.push(`${w.window_open?'窗口进行中；':''}${w.trade_coverage==='awaiting_coverage'?'尚无覆盖成交响应；':'已收到覆盖响应，仍可回补；'}${w.source_trade_volume_shares===0?'已收成交为0，数量保留；':''}${w.sample_pairs}次快照比较${w.sampling_crosses_boundary?'；有采样跨窗':''}`);for(const value of values){const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td);}tr.title=`实际快照 ${w.source_span_start} → ${w.source_span_end}；主动方向未确认，不分配成交。`;return tr;}));
   }
   $('bookThreeCSV').addEventListener('click',()=>void exportData('three'));
   let ledgerPage=0,ledgerSession='',ledgerRenderKey='';const ledgerRowNodes=new Map();
@@ -1006,9 +1015,9 @@ const bookRecorder = (() => {
     const sid=sessions.get(state.code)?.id||'';if(sid!==ledgerSession){ledgerSession=sid;ledgerPage=0;ledgerRowNodes.clear();ledgerRenderKey='';}
     const all=forceEmpty?[]:(result?.visibility_changes||[]).filter(r=>Date.parse(r.confirmed_at)<=cutoff),filter=$('bookLedgerFilter').value,filtered=all.filter(r=>filter==='all'||r.side===filter||r.visibility_state===filter),pages=Math.max(1,Math.ceil(filtered.length/30));ledgerPage=Math.min(ledgerPage,pages-1);
     $('bookLedgerSummary').textContent=`已记录 ${all.length} 项价位变化；时间、价格及数量完整保留。`;$('bookLedgerPage').textContent=`第 ${ledgerPage+1}/${pages} 页；${filtered.length}项`;$('bookLedgerPrev').disabled=ledgerPage===0;$('bookLedgerNext').disabled=ledgerPage>=pages-1;
-    const visible=[...filtered].reverse().slice(ledgerPage*30,(ledgerPage+1)*30),key=JSON.stringify([sid,filter,ledgerPage,visible.map(r=>r.id)]);if(key===ledgerRenderKey)return;ledgerRenderKey=key;
-    $('bookLedgerRows').replaceChildren(...visible.map(r=>{if(ledgerRowNodes.has(r.id))return ledgerRowNodes.get(r.id);const tr=document.createElement('tr'),clock=t=>tickSourceTime(t).split(' ').at(-1),values=[`${clock(r.interval_start)} → ${clock(r.interval_end)}`,`${r.side==='bid'?'买盘':'卖盘'} / ${r.price}`,`${fmtLots(r.before_shares)} → ${fmtLots(r.after_shares)}`,fmtLots(r.delta_shares===null?null:Math.max(r.delta_shares,0)),fmtLots(r.delta_shares===null?null:Math.max(-r.delta_shares,0)),fmtLots(r.delta_shares)];for(const value of values){const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}const td=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),proof=document.createElement('pre');summary.textContent='展开原始快照';proof.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-width:420px';proof.textContent=JSON.stringify({side:r.side,price:r.price,window_start:r.interval_start,window_end:r.interval_end,source_span_start:r.source_span_start,source_span_end:r.source_span_end,before_shares:r.before_shares,after_shares:r.after_shares,delta_shares:r.delta_shares,before_level:r.before_level,after_level:r.after_level,statistics_eligible:r.statistics_eligible,observations:r.observations,trade_attribution:'not_performed',cancellation_amount:null},null,2);details.append(summary,proof);td.appendChild(details);tr.appendChild(td);ledgerRowNodes.set(r.id,tr);return tr;}));
-    if(ledgerRowNodes.size>1500){const keep=new Set(visible.map(r=>r.id));for(const id of ledgerRowNodes.keys())if(!keep.has(id))ledgerRowNodes.delete(id);}
+    const visible=[...filtered].reverse().slice(ledgerPage*30,(ledgerPage+1)*30),key=JSON.stringify([sid,filter,ledgerPage,visible]);if(key===ledgerRenderKey)return;ledgerRenderKey=key;
+    $('bookLedgerRows').replaceChildren(...visible.map(r=>{const nodeKey=JSON.stringify([r.id,r.statistics_eligible]);if(ledgerRowNodes.has(nodeKey))return ledgerRowNodes.get(nodeKey);const tr=document.createElement('tr'),clock=t=>tickSourceTime(t).split(' ').at(-1),values=[`${clock(r.interval_start)} → ${clock(r.interval_end)}`,`${r.side==='bid'?'买盘':'卖盘'} / ${r.price}`,`${fmtLots(r.before_shares)} → ${fmtLots(r.after_shares)}`,fmtLots(r.delta_shares===null?null:Math.max(r.delta_shares,0)),fmtLots(r.delta_shares===null?null:Math.max(-r.delta_shares,0)),fmtLots(r.delta_shares)];for(const value of values){const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}const td=document.createElement('td'),details=document.createElement('details'),summary=document.createElement('summary'),proof=document.createElement('pre');summary.textContent='展开原始快照';proof.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-width:420px';proof.textContent=JSON.stringify({side:r.side,price:r.price,window_start:r.interval_start,window_end:r.interval_end,source_span_start:r.source_span_start,source_span_end:r.source_span_end,before_shares:r.before_shares,after_shares:r.after_shares,delta_shares:r.delta_shares,before_level:r.before_level,after_level:r.after_level,statistics_eligible:r.statistics_eligible,observations:r.observations,trade_attribution:'not_performed',cancellation_amount:null},null,2);details.append(summary,proof);td.appendChild(details);tr.appendChild(td);ledgerRowNodes.set(nodeKey,tr);return tr;}));
+    if(ledgerRowNodes.size>1500){const keep=new Set(visible.map(r=>JSON.stringify([r.id,r.statistics_eligible])));for(const id of ledgerRowNodes.keys())if(!keep.has(id))ledgerRowNodes.delete(id);}
   }
   function refreshLedgerView(){ledgerRenderKey='';renderStats();}
   $('bookLedgerFilter').addEventListener('change',()=>{ledgerPage=0;refreshLedgerView();});$('bookLedgerPrev').addEventListener('click',()=>{ledgerPage=Math.max(0,ledgerPage-1);refreshLedgerView();});$('bookLedgerNext').addEventListener('click',()=>{ledgerPage++;refreshLedgerView();});$('bookLedgerCSV').addEventListener('click',()=>void exportData('ledger'));
@@ -1034,7 +1043,7 @@ const bookRecorder = (() => {
   const stamp = () => new Date().toISOString();
   const fmtLots = n => Number.isFinite(n) ? (n / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—';
   const fmtRate = n => Number.isFinite(n) ? n.toFixed(2) + '%' : '—';
-  const fmtTradeRate = (rate, denominator) => denominator === 0 ? '—（成交为0）' : fmtRate(rate);
+  const fmtTradeRate = (rate, denominator) => denominator === 0 ? '—（已收成交为0）' : fmtRate(rate);
   function compare(before, after) {
     const map = rows => { const m = new Map(); for (const r of rows || []) { const side = ['bid', 'buy'].includes(String(r.side).toLowerCase()) ? 'bid' : ['ask', 'sell'].includes(String(r.side).toLowerCase()) ? 'ask' : null; const p = Number(r.price), v = Number(r.volume); if (side && r.price != null && p > 0 && r.volume != null && Number.isFinite(v) && v >= 0) m.set(`${side}|${p}`, { side, price: p, volume: v }); } return m; };
     const a = map(before), b = map(after), out = [];
@@ -1049,19 +1058,20 @@ const bookRecorder = (() => {
     const c = { events, ticks: new Map(ticks.map(t => [t.id, t])), dirty: true, computed: 0, result: null };
     caches.set(code, c); return c;
   }
-  function recompute(code, force = false) {
+  function recompute(code, force = false, cutoff = Infinity) {
     const c = caches.get(code), session = sessions.get(code); if (!c || !session) return null;
-    if (c.dirty && (force || !c.result || Date.now() - c.computed > 900)) {
-      c.result = BookThreeSecondCalculator.calculate(c.events, [...c.ticks.values()], session);
+    if (force || c.dirty || !c.result || c.cutoff !== cutoff) {
+      c.result = BookThreeSecondCalculator.calculate(c.events, [...c.ticks.values()], session, cutoff);
       c.result.integrity_audit = BookStatisticsAudit.calculate(c.events, [...c.ticks.values()], session, c.result);
-      c.dirty = false; c.computed = Date.now();
+      c.dirty = false; c.computed = Date.now(); c.cutoff = cutoff;
     }
     return c.result;
   }
   function renderStats() {
-    const code = state.code, session = sessions.get(code), result = recompute(code), selected = viewTime;
+    const code = state.code, session = sessions.get(code), selected = viewTime;
     const normalized = selected ? normalizeChartTime(selected) : null;
     const cutoff = normalized ? Date.parse(normalized.replace(' ', 'T') + '+08:00') : Date.now();
+    const result = recompute(code, false, selected ? cutoff : Infinity);
     const noData = message => {
       $('bookFlowAt').textContent = message;
       $('bookFlowBid').textContent = '买盘累计：—'; $('bookFlowAsk').textContent = '卖盘累计：—';
@@ -1080,23 +1090,24 @@ const bookRecorder = (() => {
     const snapshot = lo ? timeline[lo - 1] : null;
     const startText = `启动 ${tickSourceTime(session.started_at)}（北京）`;
     if (!snapshot) {
-      noData(`${at}｜${startText}｜尚无已核对区间：等待至少 10 秒及覆盖时段的成交响应。`);
-      $('bookFlowCoverage').textContent = selected ? '所选时刻之前尚无已确认的统计快照，不使用后来的数据冒充当时结果。' : `当前待核对 ${result?.pending_intervals || 0} 区间；未核对不视为撤单。`;
+      noData(`${at}｜${startText}｜等待两帧连续有效盘口；数据收到即计算，不等待窗口结束或成交响应。`);
+      renderLedger(result,cutoff);
+      $('bookFlowCoverage').textContent = selected ? '所选时刻之前尚无可比较的盘口快照，不使用后来的数据冒充当时结果。' : `当前待核对 ${result?.pending_intervals || 0} 区间；未核对不视为撤单。`;
       $('bookStatsDetail').textContent = `${startText}；当前会话快照 ${result?.snapshots || 0}，候选区间 ${result?.candidate_intervals || 0}，排除区间 ${result?.excluded_intervals || 0}。`;
       return;
     }
     renderLedger(result,cutoff);
     renderThreeSecond(result,cutoff,snapshot);
     renderAudit(result,cutoff);
-    $('bookFlowAt').textContent = `${at}｜${startText}｜已核对盘口至 ${tickSourceTime(snapshot.through)}；确认于 ${tickSourceTime(snapshot.at)}`;
+    $('bookFlowAt').textContent = `${at}｜${startText}｜盘口更新至 ${tickSourceTime(snapshot.through)}；数据更新于 ${tickSourceTime(snapshot.at)}`;
     for (const [side, label] of [['bid', '买盘'], ['ask', '卖盘']]) {
       const metric = snapshot[side], suffix = side === 'bid' ? 'Bid' : 'Ask';
       $('bookFlow' + suffix).textContent = `${label}累计：${fmtTradeRate(metric.reduction_rate_pct,metric.denominator_trade_shares)}`;
       $('bookFlow' + suffix + 'Detail').textContent = `观察减少 ${fmtLots(metric.observed_reduction_shares)} 手；观察增加 ${fmtLots(metric.added_shares)} 手；净变化 ${fmtLots(metric.net_change_shares)} 手；共同成交分母 ${fmtLots(metric.denominator_trade_shares)} 手；仅汇总窗口内持续可见的同价位。`;
     }
     const instant = snapshot.instant;
-    $('bookFlowInstant').textContent = instant ? `最近已核对 3 秒窗口 ${tickSourceTime(instant.start)} → ${tickSourceTime(instant.end)}｜买盘减少/成交比 ${fmtTradeRate(instant.bid?.reduction_rate_pct,instant.bid?.denominator_trade_shares)}，卖盘减少/成交比 ${fmtTradeRate(instant.ask?.reduction_rate_pct,instant.ask?.denominator_trade_shares)}` : '';
-    $('bookFlowCoverage').textContent = `已核对 ${snapshot.confirmed_intervals} 区间，排除 ${snapshot.excluded_intervals} 区间；边界进出未归因量：买 ${fmtLots(snapshot.boundary_shares?.bid)} 手 / 卖 ${fmtLots(snapshot.boundary_shares?.ask)} 手。${selected ? '仅使用选点时刻前已确认的累计快照。' : `另有 ${result.pending_intervals} 区间待核对。`}`;
+    $('bookFlowInstant').textContent = instant ? `最近实时归档窗口 ${tickSourceTime(instant.start)} → ${tickSourceTime(instant.end)}｜买盘减少/成交比 ${fmtTradeRate(instant.bid?.reduction_rate_pct,instant.bid?.denominator_trade_shares)}，卖盘减少/成交比 ${fmtTradeRate(instant.ask?.reduction_rate_pct,instant.ask?.denominator_trade_shares)}` : '';
+    $('bookFlowCoverage').textContent = `已核对 ${snapshot.confirmed_intervals} 区间，排除 ${snapshot.excluded_intervals} 区间；边界进出未归因量：买 ${fmtLots(snapshot.boundary_shares?.bid)} 手 / 卖 ${fmtLots(snapshot.boundary_shares?.ask)} 手。${selected ? '仅按选点时刻前已收到的数据重算。' : `${result.pending_intervals} 个窗口尚无覆盖成交响应；已收数量照常更新，迟到数据继续回补。`}`;
     $('bookStatsDetail').textContent = `${startText}；${collectors.has(code) && enabled ? '正在记录' : '已暂停 / 仅查看本地记录'}。会话快照 ${result.snapshots}，已核对 ${snapshot.confirmed_intervals} 区间。可见增加/成交比、减少/成交比以对应成交量作共同分母；不推断主动成交方向，不提供未经确认的撤单率。`;
   }
   async function refresh() {
@@ -1183,7 +1194,7 @@ const bookRecorder = (() => {
   }
   async function poll(code,explicit=false){
     const job=collectors.get(code);
-    if(!job?.ready||!enabled||stopped||job.busy||inFlight>=4||(!explicit&&(document.hidden||!marketPhase().open)))return;
+    if(!job?.ready||!enabled||stopped||job.busy||inFlight>=4||(!explicit&&!marketPhase().open))return;
     if(sessions.get(code)?.day!==dayShanghai()){await start(code,stamp(),true);return;}
     const controller=new AbortController();job.controller=controller;job.busy=true;job.initial=false;inFlight++;
     job.next=Date.now()+Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;
@@ -1202,8 +1213,8 @@ const bookRecorder = (() => {
   }
   function heartbeat(){
     const entries=[...collectors],offset=entries.length?roundRobin%entries.length:0,ordered=[...entries.slice(offset),...entries.slice(0,offset)];roundRobin+=4;
-    if(enabled&&!stopped&&!document.hidden)for(const [code,job]of ordered)if(job.ready&&job.initial)void poll(code,true);
-    if(enabled&&!stopped&&!document.hidden&&marketPhase().open){
+    if(enabled&&!stopped)for(const [code,job]of ordered)if(job.ready&&job.initial)void poll(code,true);
+    if(enabled&&!stopped&&marketPhase().open){
       for(const [code,job]of ordered){
         if(!job.ready)continue;
         if(sessions.get(code)?.day!==dayShanghai()){void start(code,stamp(),true);continue;}
@@ -1214,6 +1225,7 @@ const bookRecorder = (() => {
     }
     renderStats();watchlist.render();
   }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){for(const job of collectors.values())job.next=0;heartbeat();if(tickState.enabled&&marketPhase().open)tickSync(true);}});
   function setPaused(value){stopped=Boolean(value);if(!stopped){enabled=true;$('bookRecordEnabled').checked=true;}syncWatchlist();void refresh();watchlist.render();}
   function status(code){const h=health.get(code)||{},errors=[h.saveError,h.depthError,h.ticksError].filter(Boolean),clock=at=>at?tickSourceTime(at):'尚无';return `${collectors.has(code)?'采集已启用':'采集已暂停'}｜五档已保存 ${clock(h.depth)}；逐笔已保存 ${clock(h.ticks)}${errors.length?'｜'+errors.join('；'):h.loading?'｜读取中…':''}`;}
   function viewAt(time = null) { viewTime = time; renderStats(); }
@@ -1231,15 +1243,15 @@ const bookRecorder = (() => {
         for(const r of result?.visibility_changes||[])rows.push([r.id,code,r.side,r.price,r.interval_start,r.interval_end,r.source_span_start,r.source_span_end,r.before_shares,r.after_shares,r.delta_shares,r.visibility_label,r.before_level,r.after_level,r.statistics_eligible,JSON.stringify(r.observations)]);
         download(`${code}_五档可见状态明细_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else if (mode === 'three') {
-        const rows=[['股票','3秒窗口开始UTC','3秒窗口结束UTC','确认UTC','共同成交量股仅一份','买盘增加股','买盘减少股','买盘净变化股','买增加成交比百分比','买减少成交比百分比','卖盘增加股','卖盘减少股','卖盘净变化股','卖增加成交比百分比','卖减少成交比百分比','实际快照开始UTC','实际快照结束UTC','采样跨窗','比较次数','成交方向归因','同价仍在五档内变动项数','进入五档次数','移出五档次数']];
+        const rows=[['股票','3秒窗口开始UTC','3秒窗口结束UTC','数据更新UTC（仍可回补）','共同成交量股仅一份','买盘增加股','买盘减少股','买盘净变化股','买增加成交比百分比','买减少成交比百分比','卖盘增加股','卖盘减少股','卖盘净变化股','卖增加成交比百分比','卖减少成交比百分比','实际快照开始UTC','实际快照结束UTC','采样跨窗','比较次数','成交方向归因','同价仍在五档内变动项数','进入五档次数','移出五档次数']];
         for(const w of result?.windows||[])rows.push([code,w.start,w.end,w.confirmed_at,w.source_trade_volume_shares,w.bid.added_shares,w.bid.observed_reduction_shares,w.bid.net_change_shares,w.bid.addition_rate_pct,w.bid.reduction_rate_pct,w.ask.added_shares,w.ask.observed_reduction_shares,w.ask.net_change_shares,w.ask.addition_rate_pct,w.ask.reduction_rate_pct,w.source_span_start,w.source_span_end,w.sampling_crosses_boundary,w.sample_pairs,'未进行',w.visibility_counts?.in_five_same_price,w.visibility_counts?.entered_five,w.visibility_counts?.left_five]);
         download(`${code}_三秒方向中立挂量统计_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else if (mode === 'stats') {
-        const rows=[['股票','会话启动UTC','确认时间UTC','已核对盘口时间UTC','盘口侧','观察增加股','观察减少股','可见净变化股','共同累计成交分母股','增加成交比百分比','减少成交比百分比','确认窗口数','排除区间','撤单率','成交方向归因']];
+        const rows=[['股票','会话启动UTC','数据截至UTC（按窗口顺序累计）','已核对盘口时间UTC','盘口侧','观察增加股','观察减少股','可见净变化股','共同累计成交分母股','增加成交比百分比','减少成交比百分比','实时归档窗口数','排除区间','撤单率','成交方向归因']];
         for(const point of result?.timeline||[])for(const side of ['bid','ask']){const m=point[side];rows.push([code,sessions.get(code)?.started_at,point.at,point.through,side,m.added_shares,m.observed_reduction_shares,m.net_change_shares,m.denominator_trade_shares,m.addition_rate_pct,m.reduction_rate_pct,point.confirmed_intervals,point.excluded_intervals,'无法确认','未进行']);}
         download(`${code}_方向中立累计统计_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else {
-        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:8,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'只识别盘口side；不确认主动成交方向，不把同价成交分配到任一挂单侧，不估算撤单量或撤单率。可见增加、减少不等于完整逐笔委托流。同指纹记录不能区分无唯一ID的源修订。',calculation:{version:7,window_ms:3000,trade_attribution:'not_performed',reduction_ratio:'observed_reduction_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:10000,time_basis:'盘口后帧收到时间与成交源时间归档；历史选点不使用以后才确认的数据'},session:sessions.get(code),statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
+        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:9,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'只识别盘口side；不确认主动成交方向，不把同价成交分配到任一挂单侧，不估算撤单量或撤单率。可见增加、减少不等于完整逐笔委托流。同指纹记录不能区分无唯一ID的源修订。',calculation:{version:8,window_ms:3000,confirmed_at_semantics:'兼容字段，表示本次已收数据截至时间，不表示封窗；timeline为当前版本按窗口顺序累计，非不可变发布历史',trade_attribution:'not_performed',reduction_ratio:'observed_reduction_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:0,update_mode:'every_received_response_with_late_backfill',time_basis:'盘口后帧收到时间与成交源时间归档；历史选点仅按当时已收到的数据重算；窗口永不因首次展示而封账'},session:sessions.get(code),statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
       }
     } catch (e) { $('bookRecordStatus').textContent = '导出失败：' + e.message; }
   }

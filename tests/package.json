@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node --test realtime-book.test.cjs && node realtime-ui.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.3",
+    "fake-indexeddb": "6.2.6"
+  }
+}
