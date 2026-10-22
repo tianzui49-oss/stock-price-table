@@ -5,126 +5,203 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<title>清空本浏览器全部股票的本地记录</title>
+<title>选择股票和日期清除本地记录</title>
 <style>
-:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#182536;background:#f4f6f9;line-height:1.7}*{box-sizing:border-box}body{margin:0;padding:28px 18px}main{max-width:640px;margin:auto;background:white;padding:26px;border:1px solid #dce2ea;border-radius:14px}h1{font-size:24px;line-height:1.4;margin:0 0 20px}h2{font-size:17px;margin:20px 0 6px}p{margin:10px 0}ul{padding-left:22px;margin:8px 0}.warning{padding:14px;background:#fff4ed;border-left:4px solid #bc371d}.keep{color:#176343}button{width:100%;margin:18px 0 8px;padding:15px 12px;border:0;border-radius:9px;background:#b72c24;color:white;font:700 17px/1.5 system-ui;cursor:pointer}button:disabled{opacity:.55;cursor:default}button:focus-visible,a:focus-visible{outline:3px solid #225bc1;outline-offset:4px}#status{white-space:pre-line;padding:12px;background:#eef2f7;border-radius:8px;overflow-wrap:anywhere}a{color:#1453a0}.small{font-size:14px;color:#536174}[hidden]{display:none!important}
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#182536;background:#f4f6f9;line-height:1.7}*{box-sizing:border-box}body{margin:0;padding:24px 14px}main{max-width:760px;margin:auto;background:white;padding:24px;border:1px solid #dce2ea;border-radius:14px}h1{font-size:24px;line-height:1.4;margin:0 0 18px}h2,legend{font-size:17px;font-weight:700}p{margin:10px 0}.warning{padding:12px;background:#fff4ed;border-left:4px solid #bc371d}.keep{color:#176343}.small{font-size:14px;color:#536174}fieldset{margin:18px 0;border:1px solid #dce2ea;border-radius:9px;padding:14px}label{display:inline-flex;align-items:center;gap:6px;margin:5px 12px 5px 0}input{font:inherit}input[type=checkbox],input[type=radio]{width:19px;height:19px}button{margin:7px 6px 7px 0;padding:11px 14px;border:1px solid #c7d1df;border-radius:8px;background:#eef2f7;color:#182536;font:600 15px/1.5 system-ui;cursor:pointer}button.danger{background:#b72c24;color:white;border-color:#b72c24}button:disabled{opacity:.5;cursor:default}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #225bc1;outline-offset:3px}#status{white-space:pre-line;padding:12px;background:#eef2f7;border-radius:8px;overflow-wrap:anywhere}#confirmation{border:2px solid #b72c24;padding:16px;border-radius:9px}#summary{white-space:pre-wrap;overflow-wrap:anywhere}.choices{max-height:250px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid #dce2ea;padding:7px;text-align:left;overflow-wrap:anywhere}.table-wrap{overflow:auto}a{color:#1453a0}[hidden]{display:none!important}@media(max-width:480px){main{padding:16px}h1{font-size:21px}button{max-width:100%}}
 </style>
 </head>
 <body>
 <main>
-<h1>清空本浏览器全部股票的本地记录</h1>
-<p class="warning"><strong>永久删除，无法撤销。</strong>仅影响当前浏览器／用户配置中，本行情网站保存的全部股票记录；不会清除其他设备或其他浏览器中的数据。</p>
-<h2>将清除所有股票的</h2>
-<ul><li>原始逐笔成交（ticks）与五档盘口快照</li><li>采集会话、统计历史与最新采集记录</li><li>各股票、各日期的图表缓存</li><li>最后保存的有效五档深度快照</li></ul>
-<p class="keep"><strong>保留：</strong>自选股列表、查询历史和其他设置；不清除其他网站数据。</p>
-<h2>操作前请先做这两步</h2>
-<p>1. 使用原来查看行情的<strong>同一个浏览器、同一个用户配置</strong>打开本页，不要使用无痕窗口，也不要换成聊天内置浏览器。若原来就是聊天内置浏览器，则仍在原来的浏览器环境中操作。</p>
-<p>2. <strong>关闭其他所有行情页面／窗口</strong>，只保留本清理页，避免旧页面继续采集或把内存中的旧缓存写回。必要时先在行情页暂停全部采集，再关闭它。</p>
-<p class="small">打开本页不会清除任何记录。只有点击下面的按钮才会执行。</p>
-<button id="clearButton" type="button" aria-describedby="status">永久清空全部股票本地行情记录（保留自选和查询历史）</button>
-<p id="status" role="status" aria-live="polite" aria-atomic="true">尚未执行清理。</p>
-<p id="nextStep" hidden><a href="/">重新打开行情页，开始新的采集</a><br><span class="small">从空白记录重新开始；若此前暂停了采集，请按需恢复。旧的本地历史无法通过本页找回。</span></p>
-<noscript><p>本页需要 JavaScript 才能清理。当前尚未执行任何清理。</p></noscript>
+<h1>选择股票和日期清除本地记录</h1>
+<p class="warning"><strong>永久删除，无法撤销。</strong>仅清除本浏览器内所选范围的逐笔、五档和统计记录，不影响其他设备。打开本页、选择范围和预览均不会删除数据。</p>
+<p class="keep"><strong>始终保留：</strong>分时图历史、搜索历史、自选列表及其他数据。未选择的股票和日期也全部保留。</p>
+<p class="small">请用原来查看行情的同一个浏览器／用户配置。清除前先暂停采集，关闭其他所有行情页面／窗口，只保留本页，避免旧记录被写回。五档和接口事件按收到的北京时间日期，逐笔按源成交日期；统计会话指针按会话日期。无法识别的记录不会贸然删除。</p>
+<form id="scopeForm">
+<fieldset><legend>1. 股票范围</legend>
+<label><input type="radio" name="stockMode" value="selected" checked>选择股票</label><label><input type="radio" name="stockMode" value="all">全部有记录的股票（含非自选）</label>
+<p class="small">可勾选自选中的特定股票；也可选择已移出自选但仍有记录的股票。默认不选任何股票。</p>
+<div id="stockChoices" class="choices">正在读取自选及记录……</div>
+</fieldset>
+<fieldset><legend>2. 日期范围（北京时间）</legend>
+<label><input type="radio" name="dateMode" value="selected" checked>选择日期</label><label><input type="radio" name="dateMode" value="all">全部日期（含日期不明的目标记录）</label>
+<div><button id="todayButton" type="button">只选当天（北京时间）</button><label>指定日期 <input id="customDay" type="date"></label><button id="addDayButton" type="button">加入日期选择</button></div>
+<div id="dateChoices" class="choices"></div>
+<p class="small">可以勾选多个日期；股票与日期取交集。不勾选的日期不清除。</p>
+</fieldset>
+<p><strong>清除类别：</strong>逐笔原始记录、五档图下的“实时快照明细”（五档原始快照及每次盘口变化记录）、有效深度缓存、统计接口／会话记录和比率起点标记。股价分时图历史不在清除范围；五档逐次变化图由五档记录重建，随该范围记录一起清除。</p>
+<button id="previewButton" type="submit">预览所选范围</button><button id="allButton" type="button" class="danger">一键选择全部股票／全部日期并预览</button>
+</form>
+<section id="confirmation" hidden aria-labelledby="confirmTitle">
+<h2 id="confirmTitle">再次确认删除范围</h2>
+<p id="summary"></p><div class="table-wrap"><table><thead><tr><th>股票</th><th>日期（北京）</th><th>数据类别及条数</th></tr></thead><tbody id="previewRows"></tbody></table></div>
+<p class="keep">分时图历史、搜索历史、自选及其他数据保持不变。清除后请重新打开行情页，不要恢复旧的行情窗口。</p>
+<label><input id="closedPages" type="checkbox">我已暂停采集并关闭其他行情页面</label><br>
+<button id="confirmButton" type="button" class="danger" disabled>确认永久清除上述记录</button><button id="cancelButton" type="button">取消，不清除</button>
+</section>
+<p id="status" role="status" aria-live="polite" aria-atomic="true">正在只读检查本地记录；尚未执行清理。</p>
+<p><a href="/">返回行情页</a></p>
+<noscript><p>本页需要 JavaScript；尚未执行任何清理。</p></noscript>
 </main>
 <script>
 'use strict';
 (() => {
   const DB_NAME = 'thsdk-orderbook-recorder-v1';
   const STORES = ['events', 'ticks', 'latest'];
-  const PREFIXES = ['stock-chart-', 'thsdk-last-valid-depth-v1:'];
-  const button = document.getElementById('clearButton');
-  const status = document.getElementById('status');
-  const nextStep = document.getElementById('nextStep');
-  const isMarketKey = key => PREFIXES.some(prefix => key.startsWith(prefix));
-  let running = false;
-
+  const DEPTH_PREFIX = 'thsdk-last-valid-depth-v1:';
+  const CUTOFF_KEY = 'stock-derived-rate-cutoffs-v1';
+  const $ = id => document.getElementById(id);
+  const codeOK = code => typeof code === 'string' && /^\d{6}$/.test(code);
+  const dayOK = day => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0,10) === day;
+  const beijingDay = value => { const t = typeof value === 'number' ? value : Date.parse(value); return Number.isFinite(t) ? new Date(t + 8 * 3600000).toISOString().slice(0,10) : ''; };
+  const validDay = value => dayOK(value) ? value : '';
+  let running = false, pending = null, ready = false;
+  const stockNames = new Map();
+  function parse(text) { try { return JSON.parse(text); } catch { return null; } }
+  function tickDay(value) {
+    const time = value.row?.time, n = Number(time), text = String(time ?? '');
+    if (Number.isFinite(n) && n >= 1500000000 && n <= 2200000000) return beijingDay(n * 1000);
+    if (/^\d{14}$/.test(text)) return validDay(`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6,8)}`);
+    if (/^\d{8}$/.test(text)) return validDay(`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6,8)}`);
+    return beijingDay(time) || validDay(value.day);
+  }
+  // Only known recorder schemas are eligible. Unknown records/keys stay untouched.
+  function identity(store, value) {
+    if (!value || typeof value !== 'object') return null;
+    if (store === 'ticks' && codeOK(value.code) && value.row && typeof value.row === 'object') return {code:value.code, day:tickDay(value), category:'逐笔'};
+    if (store === 'events' && codeOK(value.code) && ['depth','tick_response','stats_start','stats_resume'].includes(value.kind)) return {code:value.code, day:beijingDay(value.received_at) || validDay(value.day) || validDay(value.session?.day), category:value.kind === 'depth' ? '五档实时快照明细' : '统计／接口会话'};
+    if (store === 'latest') {
+      if (codeOK(value.code) && Array.isArray(value.rows)) return {code:value.code, day:beijingDay(value.received_at) || validDay(value.day), category:'五档缓存'};
+      const session = /^stats-session:(\d{6})$/.exec(value.code);
+      if (session && value.session?.code === session[1]) return {code:session[1], day:validDay(value.session.day) || beijingDay(value.session.started_at), category:'统计会话指针'};
+      const recovered = /^stats-original-session-recovered:(\d{6}):(\d{4}-\d{2}-\d{2})$/.exec(value.code);
+      if (recovered && dayOK(recovered[2])) return {code:recovered[1], day:recovered[2], category:'统计恢复标记'};
+    }
+    return null;
+  }
   function openExistingDatabase() {
     return new Promise((resolve, reject) => {
-      let settled = false;
-      let absent = false;
+      let settled = false, absent = false;
       const request = indexedDB.open(DB_NAME);
-      const finish = (error, db) => {
-        if (settled) { if (db) db.close(); return; }
-        settled = true;
-        clearTimeout(timer);
-        if (error) reject(error); else resolve(db);
-      };
-      const timer = setTimeout(() => finish(new Error('数据库暂时被占用。请关闭其他行情页面后重试。')), 15000);
-      request.onupgradeneeded = event => {
-        // A missing database must stay missing. Never create or upgrade a schema.
-        absent = event.oldVersion === 0;
-        request.transaction.abort();
-      };
-      request.onblocked = () => {
-        status.textContent = '等待数据库访问；请关闭其他行情页面。尚未报告清理成功。';
-      };
-      request.onerror = () => finish(absent ? null : (request.error || new Error('无法打开本地数据库。')), null);
+      const finish = (error, db) => { if (settled) { if (db) db.close(); return; } settled = true; clearTimeout(timer); error ? reject(error) : resolve(db); };
+      const timer = setTimeout(() => finish(Error('数据库暂时被占用，请关闭其他行情页面后重试。')), 15000);
+      request.onupgradeneeded = event => { absent = event.oldVersion === 0; request.transaction.abort(); };
+      request.onerror = () => finish(absent ? null : request.error, null);
       request.onsuccess = () => finish(null, request.result);
     });
   }
-
-  function clearStores(db) {
-    return new Promise((resolve, reject) => {
-      const names = STORES.filter(name => db.objectStoreNames.contains(name));
-      if (!names.length) { resolve([]); return; }
-      const tx = db.transaction(names, 'readwrite');
-      tx.oncomplete = () => resolve(names);
-      tx.onabort = () => reject(tx.error || new Error('数据库清理未提交，请重试。'));
-      // All targeted stores are cleared atomically. Other stores are untouched.
-      for (const name of names) tx.objectStore(name).clear();
-    });
-  }
-
-  function verifyStores(db, names) {
-    return new Promise((resolve, reject) => {
-      if (!names.length) { resolve(); return; }
-      const tx = db.transaction(names, 'readonly');
-      let remaining = 0;
-      for (const name of names) {
-        const request = tx.objectStore(name).count();
-        request.onsuccess = () => { remaining += request.result; };
-      }
-      tx.oncomplete = () => remaining === 0 ? resolve() : reject(new Error('检测到行情记录被再次写入。请关闭其他行情页面后重新清理。'));
-      tx.onabort = () => reject(tx.error || new Error('无法核验数据库清理结果。'));
-    });
-  }
-
-  button.addEventListener('click', async () => {
-    if (running) return;
-    running = true;
-    button.disabled = true;
-    nextStep.hidden = true;
-    status.textContent = '正在清理并核验本浏览器的行情记录，请勿关闭本页……';
-    let db = null;
+  async function snapshot() {
+    if (location.origin !== 'https://tianzui49-oss.github.io') throw Error('请从原网站的 clear-local.html 打开此页。');
+    if (!window.indexedDB) throw Error('此浏览器无法访问 IndexedDB。');
+    const storage = window.localStorage, local = {};
+    for (let i=0; i<storage.length; i++) { const key=storage.key(i); if (key === CUTOFF_KEY || /^thsdk-last-valid-depth-v1:\d{6}$/.test(key)) local[key]=storage.getItem(key); }
+    const db = await openExistingDatabase();
     try {
-      if (location.origin !== 'https://tianzui49-oss.github.io') throw new Error('请从原网站 https://tianzui49-oss.github.io/clear-local.html 打开此页。');
-      if (!window.indexedDB) throw new Error('当前浏览器无法访问 IndexedDB，尚未完成清理。');
-      // Access localStorage before deleting anything to catch disabled storage early.
-      const storage = window.localStorage;
-      const keys = [];
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i);
-        if (key !== null && isMarketKey(key)) keys.push(key);
+      const records = {};
+      if (db) {
+        const names=STORES.filter(name=>db.objectStoreNames.contains(name));
+        if (names.length) await new Promise((resolve,reject)=>{
+          const tx=db.transaction(names,'readonly');
+          for (const name of names) { records[name]=[]; const req=tx.objectStore(name).openCursor(); req.onsuccess=()=>{const cursor=req.result;if(cursor){records[name].push({key:cursor.primaryKey,value:cursor.value});cursor.continue();}}; }
+          tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error || Error('读取本地记录失败。'));
+        });
       }
-      db = await openExistingDatabase();
-      const names = db ? await clearStores(db) : [];
-      for (const key of keys) storage.removeItem(key);
-      if (db) await verifyStores(db, names);
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i);
-        if (key !== null && isMarketKey(key)) throw new Error('行情缓存仍存在或被再次写入。请关闭其他行情页面后重新清理。');
-      }
-      status.textContent = '清理完成：已核验本浏览器中全部股票的原始逐笔、五档快照、会话／统计历史、图表缓存和最后保存的深度快照已清空（原本不存在的记录保持为空）。\n自选股列表、查询历史和其他设置保持不变。请重新打开行情页，开始新的采集；不要恢复仍在运行的旧行情页面。';
-      nextStep.hidden = false;
-      button.textContent = '清理完成';
-    } catch (error) {
-      status.textContent = '未能确认全部清理完成：' + (error && error.message ? error.message : String(error)) + '\n部分记录可能已经清除。请关闭其他行情页后重试；只有显示“清理完成”才表示核验通过。';
-      button.disabled = false;
-    } finally {
-      if (db) db.close();
-      running = false;
+      return {records,local};
+    } finally { if(db)db.close(); }
+  }
+  function localEntries(data) {
+    const entries=[];
+    for(const [key,text] of Object.entries(data.local)) {
+      const value=parse(text);
+      if(key.startsWith(DEPTH_PREFIX) && value?.source==='THSDK' && value.code===key.slice(DEPTH_PREFIX.length) && Array.isArray(value.rows)) entries.push({key,code:value.code,day:beijingDay(value.checked_at || value.fetched_at),category:'有效五档缓存'});
+      if(key===CUTOFF_KEY && value && !Array.isArray(value) && typeof value==='object') for(const [day,items] of Object.entries(value)) if(dayOK(day) && items && !Array.isArray(items) && typeof items==='object') for(const [code,at] of Object.entries(items)) if(codeOK(code) && typeof at==='string' && beijingDay(at)===day) entries.push({key,code,day,category:'统计比率起点'});
     }
-  });
+    return entries;
+  }
+  function entries(data) {
+    return [...Object.entries(data.records).flatMap(([store,rows])=>rows.flatMap(row=>{const id=identity(store,row.value);return id?[{...id,store,key:row.key}]:[];})),...localEntries(data)];
+  }
+  function setBusy(value) { running=value;for(const input of $('scopeForm').querySelectorAll('input,button'))input.disabled=value;$('cancelButton').disabled=value;$('closedPages').disabled=value; }
+  function invalidate() {pending=null;$('confirmation').hidden=true;$('closedPages').checked=false;$('confirmButton').disabled=true;}
+  function addChoice(container, name, value, label, checked=false) {
+    const wrapper=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.name=name;input.value=value;input.checked=checked;wrapper.append(input,document.createTextNode(label));$(container).append(wrapper);return input;
+  }
+  function radio(name) {return document.querySelector(`input[name="${name}"]:checked`).value;}
+  function selectRadio(name,value) {document.querySelector(`input[name="${name}"][value="${value}"]`).checked=true;}
+  function checked(name) {return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(input=>input.value);}
+  function selectedScope() {return {allStocks:radio('stockMode')==='all',allDays:radio('dateMode')==='all',codes:checked('stock'),days:checked('day')};}
+  function matches(entry,scope) {return (scope.allStocks || scope.codes.includes(entry.code)) && (scope.allDays || scope.days.includes(entry.day));}
+  function plan(data,scope) {
+    const chosen=entries(data).filter(entry=>matches(entry,scope));
+    const changes=new Map();
+    for(const entry of chosen.filter(entry=>!entry.store)) {
+      if(entry.key!==CUTOFF_KEY) changes.set(entry.key,null);
+      else {
+        if(!changes.has(CUTOFF_KEY)) changes.set(CUTOFF_KEY,parse(data.local[CUTOFF_KEY]));
+        const next=changes.get(CUTOFF_KEY);delete next[entry.day][entry.code];if(!Object.keys(next[entry.day]).length)delete next[entry.day];
+      }
+    }
+    if(changes.has(CUTOFF_KEY))changes.set(CUTOFF_KEY,JSON.stringify(changes.get(CUTOFF_KEY)));
+    return {chosen,changes};
+  }
+  async function preview(scope) {
+    if(running || !ready)return;invalidate();setBusy(true);
+    try {
+      if(!scope.allStocks && !scope.codes.length)throw Error('请先选择至少一只股票，或选择全部股票。');
+      if(!scope.allDays && !scope.days.length)throw Error('请先选择日期，或选择当天／全部日期。');
+      const data=await snapshot(),result=plan(data,scope);
+      if(!result.chosen.length){$('status').textContent='所选股票和日期没有可清除的已识别目标记录。未更改任何数据。';return;}
+      const codes=[...new Set(result.chosen.map(x=>x.code))].sort(),days=[...new Set(result.chosen.map(x=>x.day||'日期不明'))].sort();
+      $('summary').textContent=`股票范围：${scope.allStocks?'全部股票':scope.codes.join('、')}\n日期范围：${scope.allDays?'全部日期（含日期不明）':scope.days.join('、')}\n实际将删除的股票：${codes.map(code=>`${stockNames.get(code)||code}（${code}）`).join('、')}\n实际将删除的日期：${days.join('、')}\n以下列出每只股票、日期及数据类别，共 ${result.chosen.length} 条记录／标记。未列出的数据保留。`;
+      $('previewRows').replaceChildren();const groups=new Map();
+      for(const entry of result.chosen){const key=JSON.stringify([entry.code,entry.day]);if(!groups.has(key))groups.set(key,new Map());const counts=groups.get(key);counts.set(entry.category,(counts.get(entry.category)||0)+1);}
+      for(const [key,counts] of [...groups].sort()){const [code,day]=JSON.parse(key),tr=document.createElement('tr');for(const text of [`${stockNames.get(code)||code}（${code}）`,day||'日期不明', [...counts].map(([kind,n])=>`${kind} ${n}`).join('；')]){const td=document.createElement('td');td.textContent=text;tr.append(td);}$('previewRows').append(tr);}
+      pending={scope,data,result};$('confirmation').hidden=false;$('status').textContent='仅预览，尚未清理。核对股票、日期和类别后，仍需点击确认永久清除。';
+    } catch(error){$('status').textContent='未执行清理：'+error.message;}finally{setBusy(false);}
+  }
+  async function deleteDatabaseRows(db,expected,result) {
+    const names=Object.keys(expected.records);if(!names.length)return;
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(names,'readwrite'),actual={};let remaining=names.length,mismatch=false;
+      tx.oncomplete=resolve;tx.onabort=()=>reject(Error(mismatch?'预览后记录发生变化，请关闭其他行情页并重新预览。未提交数据库删除。':(tx.error?.message||'数据库删除事务未提交。')));
+      for(const name of names){actual[name]=[];const req=tx.objectStore(name).openCursor();req.onsuccess=()=>{const cursor=req.result;if(cursor){actual[name].push({key:cursor.primaryKey,value:cursor.value});cursor.continue();return;}if(--remaining===0){if(JSON.stringify(actual)!==JSON.stringify(expected.records)){mismatch=true;tx.abort();return;}for(const entry of result.chosen)if(entry.store)tx.objectStore(entry.store).delete(entry.key);}};}
+    });
+  }
+  async function confirmDelete() {
+    if(running || !pending || !$('closedPages').checked)return;
+    const task=pending;setBusy(true);$('confirmButton').disabled=true;let db=null,stage='尚未提交删除';
+    try {
+      const current=await snapshot();
+      if(JSON.stringify(current)!==JSON.stringify(task.data))throw Error('预览后记录已变化，请关闭其他行情页并重新预览。');
+      db=await openExistingDatabase();
+      if(!db && Object.keys(task.data.records).length)throw Error('数据库已变化，请重新预览。');
+      for(const key of task.result.changes.keys())if(localStorage.getItem(key)!==task.data.local[key])throw Error('目标缓存已变化，请重新预览。');
+      if(db)await deleteDatabaseRows(db,task.data,task.result);stage='所选数据库记录已提交删除';
+      for(const [key,value] of task.result.changes){if(localStorage.getItem(key)!==task.data.local[key])throw Error('目标缓存已被其他页面改写，请关闭其他行情页面并重新预览。');if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}
+      stage='所选数据库和本地缓存已完成删除，正在核验';
+      const expected=JSON.parse(JSON.stringify(task.data));
+      for(const [store,rows] of Object.entries(expected.records)){const removed=new Set(task.result.chosen.filter(x=>x.store===store).map(x=>JSON.stringify(x.key)));expected.records[store]=rows.filter(row=>!removed.has(JSON.stringify(row.key)));}
+      for(const [key,value]of task.result.changes){if(value===null)delete expected.local[key];else expected.local[key]=value;}
+      const after=await snapshot();if(JSON.stringify(after)!==JSON.stringify(expected))throw Error('核验不一致，可能仍有行情页写入；请关闭其他页面后重新预览。');
+      invalidate();$('status').textContent=`清理完成：已删除并核验所选范围的 ${task.result.chosen.length} 条逐笔／五档／统计记录或标记，未选股票和日期的已读记录保持不变。\n分时图历史、搜索历史、自选及其他数据未操作。请重新打开行情页，不要恢复旧行情窗口。`;
+    }catch(error){invalidate();$('status').textContent=(stage==='尚未提交删除'?'未执行清理：':`未能确认清理完成：${stage}，部分目标记录可能已清除；请重新预览剩余记录。\n`)+error.message;}finally{if(db)db.close();setBusy(false);}
+  }
+  $('scopeForm').addEventListener('change',()=>{invalidate();$('status').textContent='范围已更改，尚未清理；请重新预览。';});
+  $('scopeForm').addEventListener('submit',event=>{event.preventDefault();void preview(selectedScope());});
+  $('allButton').addEventListener('click',()=>{if(running)return;selectRadio('stockMode','all');selectRadio('dateMode','all');void preview(selectedScope());});
+  $('todayButton').addEventListener('click',()=>{if(running)return;invalidate();const day=beijingDay(Date.now());selectRadio('dateMode','selected');for(const input of document.querySelectorAll('input[name="day"]'))input.checked=input.value===day;if(![...document.querySelectorAll('input[name="day"]')].some(x=>x.value===day))addChoice('dateChoices','day',day,day,true);$('customDay').value=day;$('status').textContent=`已仅选择当天 ${day}（北京时间），尚未清理。`;});
+  $('addDayButton').addEventListener('click',()=>{if(running)return;const day=$('customDay').value;if(!dayOK(day)){$('status').textContent='请选择有效日期；未执行清理。';return;}invalidate();selectRadio('dateMode','selected');const input=[...document.querySelectorAll('input[name="day"]')].find(x=>x.value===day);if(input)input.checked=true;else addChoice('dateChoices','day',day,day,true);$('status').textContent='已加入日期 '+day+'，尚未清理。';});
+  $('closedPages').addEventListener('change',()=>{$('confirmButton').disabled=!pending || !$('closedPages').checked || running;});
+  $('cancelButton').addEventListener('click',()=>{if(running)return;invalidate();$('status').textContent='已取消，未清除任何记录。';});
+  $('confirmButton').addEventListener('click',()=>void confirmDelete());
+  (async()=>{try{
+    const watchlist=parse(localStorage.getItem('stock-watchlist-v1'));
+    if(Array.isArray(watchlist))for(const item of watchlist)if(item && codeOK(item.code))stockNames.set(item.code,String(item.name||item.code));
+    const data=await snapshot(),known=entries(data),codes=[...new Set([...stockNames.keys(),...known.map(x=>x.code)])].sort();
+    $('stockChoices').replaceChildren();for(const code of codes)addChoice('stockChoices','stock',code,`${stockNames.get(code)||code}（${code}）${stockNames.has(code)?' · 自选':' · 历史记录'}`);
+    if(!codes.length)$('stockChoices').textContent='本浏览器未读到自选或可识别的目标记录。';
+    for(const day of [...new Set(known.map(x=>x.day).filter(Boolean))].sort().reverse())addChoice('dateChoices','day',day,day);
+    ready=true;$('status').textContent='已只读加载本地范围，尚未执行清理。默认不选择股票或日期；无法识别的记录保留。';
+  }catch(error){$('status').textContent='读取失败，未更改任何数据：'+error.message;}})();
 })();
 </script>
 </body>

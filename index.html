@@ -44,7 +44,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     <div id="status">输入股票代码或名称后点击“查询 / 开始”。实时图需要在 A 股交易时段保持页面打开；默认每 1 秒采样一次。</div>
   </section>
 
-  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="rateResetAll" type="button">重置今日比率累计（全部自选＋当前股）</button><button class="secondary" id="watchlistPause" type="button">暂停全部采集</button></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="rateResetStatus" class="small" role="status">仅重置今日加单、撤单与共同成交分母的累计起点；点击后先核对股票清单，不删除任何记录，不重启录制。</p><p id="watchlistStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
+  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="rateResetAll" type="button">重置今日比率累计（全部自选＋当前股）</button><button class="secondary" id="watchlistPause" type="button">暂停全部采集</button><a class="secondary" id="localClearLink" href="/clear-local.html?v=scoped-reset-v1">按股票／日期清除记录</a></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="rateResetStatus" class="small" role="status">仅重置今日加单、撤单与共同成交分母的累计起点；点击后先核对股票清单，不删除任何记录，不重启录制。</p><p id="watchlistStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
 
 <section id="result" hidden>
     <section class="card">
