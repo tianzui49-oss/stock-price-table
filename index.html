@@ -44,7 +44,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     <div id="status">输入股票代码或名称后点击“查询 / 开始”。实时图需要在 A 股交易时段保持页面打开；默认每 1 秒采样一次。</div>
   </section>
 
-  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="watchlistPause" type="button">暂停全部采集</button></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="watchlistStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
+  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="rateResetAll" type="button">重置今日比率累计（全部自选＋当前股）</button><button class="secondary" id="watchlistPause" type="button">暂停全部采集</button></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="rateResetStatus" class="small" role="status">仅重置今日加单、撤单与共同成交分母的累计起点；点击后先核对股票清单，不删除任何记录，不重启录制。</p><p id="watchlistStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
 
 <section id="result" hidden>
     <section class="card">
@@ -1004,6 +1004,38 @@ const BookStatisticsAudit = (() => {
 if (typeof module !== 'undefined') module.exports = BookStatisticsAudit;
 if (typeof globalThis !== 'undefined') globalThis.BookStatisticsAudit = BookStatisticsAudit;
 
+// Derived-only boundaries. This module never opens or writes the raw recording database.
+const DerivedRateReset = (() => {
+  const key = 'stock-derived-rate-cutoffs-v1';
+  function read() {
+    const text = localStorage.getItem(key);
+    if (!text) return {};
+    const data = JSON.parse(text);
+    if (!data || Array.isArray(data) || typeof data !== 'object') throw Error('比率起点标记无效；未覆盖已有内容');
+    return data;
+  }
+  const dayAt = t => new Date(t + 8 * 3600000).toISOString().slice(0, 10);
+  const selection = (codes, current) => [...new Set([...codes, current].filter(c => /^\d{6}$/.test(c)))].sort();
+  function cutoff(code, day) {
+    const value = read()[day]?.[code];
+    return typeof value === 'string' && Number.isFinite(Date.parse(value)) && dayAt(Date.parse(value)) === day ? value : null;
+  }
+  function reset(codes, now = Date.now()) {
+    const selected = selection(codes, '');
+    if (!selected.length) throw Error('没有可重置的股票');
+    const data = read(), day = dayAt(now), at = new Date(now).toISOString();
+    const next = { ...data, [day]: { ...(data[day] || {}) } };
+    for (const code of selected) next[day][code] = at;
+    // Exactly one separate-key write: all selected stocks succeed together or none do.
+    localStorage.setItem(key, JSON.stringify(next));
+    return { codes: selected, day, at };
+  }
+  function sessionFor(session, marker) {
+    return marker && Date.parse(marker) > Date.parse(session.started_at) ? { ...session, started_at: marker } : session;
+  }
+  return { key, selection, cutoff, reset, sessionFor };
+})();
+
 // Local watchlist is independent of query history and recorder data. Never delete recordings on removal.
 const watchlist = (() => {
   const key='stock-watchlist-v1'; let items=[],storageError='',renderKey='';
@@ -1119,13 +1151,36 @@ const bookRecorder = (() => {
   }
   function recompute(code, force = false, cutoff = Infinity) {
     const c = caches.get(code), session = sessions.get(code); if (!c || !session) return null;
-    if (force || c.dirty || !c.result || c.cutoff !== cutoff) {
-      c.result = BookThreeSecondCalculator.calculate(c.events, [...c.ticks.values()], session, cutoff);
-      c.result.integrity_audit = BookStatisticsAudit.calculate(c.events, [...c.ticks.values()], session, c.result);
-      c.dirty = false; c.computed = Date.now(); c.cutoff = cutoff;
+    const marker = DerivedRateReset.cutoff(code, session.day);
+    if (force || c.dirty || !c.result || c.cutoff !== cutoff || c.rateMarker !== marker) {
+      const rateSession = DerivedRateReset.sessionFor(session, marker), ticks = [...c.ticks.values()];
+      c.result = BookThreeSecondCalculator.calculate(c.events, ticks, rateSession, cutoff);
+      c.result.integrity_audit = BookStatisticsAudit.calculate(c.events, ticks, rateSession, c.result);
+      c.result.rate_reset_at = marker;
+      if (marker) {
+        // Keep all historical visible-price details available; only rate accumulation is bounded.
+        const full = BookThreeSecondCalculator.calculate(c.events, ticks, session, cutoff);
+        c.result.visibility_changes = full.visibility_changes.map(row => Date.parse(row.source_span_start) < Date.parse(rateSession.started_at) ? { ...row, statistics_eligible: false } : row);
+        c.result.snapshots = full.snapshots;
+      }
+      c.dirty = false; c.computed = Date.now(); c.cutoff = cutoff; c.rateMarker = marker;
     }
     return c.result;
   }
+  function resetAllRates() {
+    const codes = DerivedRateReset.selection(watchlist.codes(), state.code);
+    if (!codes.length) { $('rateResetStatus').textContent = '暂无自选股或当前查询股票，未更改任何数据。'; return; }
+    const message = `重置今日比率累计：共 ${codes.length} 只股票\n${codes.join('、')}\n\n确认后，以你点击确认的时刻为新起点：今日买卖两侧累计加单量、撤单量及共同成交分母从0开始。等待两帧起点后的连续有效盘口，再按3秒归档继续累计；跨起点区间不计入。分母为0时比率不可计算，并非0%。\n\n全部逐笔、五档快照、图表历史、搜索历史、自选列表和录制会话原样保留；不暂停、不重启采集。仅对当前浏览器生效。是否确认？`;
+    if (!window.confirm(message)) return;
+    try {
+      const saved = DerivedRateReset.reset(codes);
+      for (const code of codes) { const c = caches.get(code); if (c) c.dirty = true; }
+      $('rateResetStatus').textContent = `已设置今日比率新起点 ${tickSourceTime(saved.at)}（北京）：${saved.codes.join('、')}。加单量、撤单量与成交分母从0重新累计；分母为0时比率不可计算。原始记录与采集状态未更改。`;
+      renderStats();
+    } catch (e) { $('rateResetStatus').textContent = '比率起点更新失败：' + e.message; }
+  }
+  $('rateResetAll').addEventListener('click', resetAllRates);
+  window.addEventListener('storage', e => { if (e.key === DerivedRateReset.key) { for (const c of caches.values()) c.dirty = true; renderStats(); } });
   function renderStats() {
     const code = state.code, session = sessions.get(code), selected = viewTime;
     const normalized = selected ? normalizeChartTime(selected) : null;
@@ -1147,10 +1202,15 @@ const bookRecorder = (() => {
     const timeline = result?.timeline || []; let lo = 0, hi = timeline.length;
     while (lo < hi) { const mid = (lo + hi) >>> 1; if (Date.parse(timeline[mid].at) <= cutoff) lo = mid + 1; else hi = mid; }
     const snapshot = selected ? (lo ? timeline[lo - 1] : null) : (timeline.at(-1) || null);
-    const startText = `启动 ${tickSourceTime(session.started_at)}（北京）`;
+    const startText = `录制启动 ${tickSourceTime(session.started_at)}（北京）${result?.rate_reset_at ? '｜今日比率起点 ' + tickSourceTime(result.rate_reset_at) + '（北京；不改录制会话）' : ''}`;
     if (!snapshot) {
       noData(`${at}｜${startText}｜等待两帧连续有效盘口；数据收到即计算，不等待窗口结束或成交响应。`);
       renderLedger(result,cutoff);
+      if (result?.rate_reset_at) {
+        const zero = '累计加单 0 手；累计撤单 0 手；共同成交分母 0 手。等待新起点后的有效配对区间；分母为0，比率不可计算。';
+        for (const id of ['bookFlowBidDetail','bookFlowAskDetail','bookBidAdditionDetail','bookAskAdditionDetail']) $(id).textContent = zero;
+        $('bookFlowVolume').textContent = $('bookThreeSource').textContent = '共同成交量：0 手（今日比率新起点后尚无有效配对区间）';
+      }
       $('bookFlowCoverage').textContent = selected ? '所选时刻之前尚无可比较的盘口快照，不使用后来的数据冒充当时结果。' : `当前待核对 ${result?.pending_intervals || 0} 区间；未核对不视为撤单。`;
       $('bookStatsDetail').textContent = `${startText}；当前会话快照 ${result?.snapshots || 0}，候选区间 ${result?.candidate_intervals || 0}，排除区间 ${result?.excluded_intervals || 0}。`;
       return;
@@ -1310,15 +1370,15 @@ const bookRecorder = (() => {
         for(const r of result?.visibility_changes||[])rows.push([r.id,code,r.side,r.price,r.interval_start,r.interval_end,r.source_span_start,r.source_span_end,r.before_shares,r.after_shares,r.delta_shares,r.visibility_label,r.before_level,r.after_level,r.statistics_eligible,JSON.stringify(r.observations)]);
         download(`${code}_五档可见状态明细_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else if (mode === 'three') {
-        const rows=[['股票','3秒窗口开始UTC','3秒窗口结束UTC','数据更新UTC（仍可回补）','共同成交量股仅一份','买盘增加股','买盘减少股','买盘净变化股','买增加成交比百分比','买减少成交比百分比','卖盘增加股','卖盘减少股','卖盘净变化股','卖增加成交比百分比','卖减少成交比百分比','实际快照开始UTC','实际快照结束UTC','采样跨窗','比较次数','成交方向归因','同价仍在五档内变动项数','进入五档次数','移出五档次数']];
-        for(const w of result?.windows||[])rows.push([code,w.start,w.end,w.confirmed_at,w.source_trade_volume_shares,w.bid.added_shares,w.bid.observed_reduction_shares,w.bid.net_change_shares,w.bid.addition_rate_pct,w.bid.reduction_rate_pct,w.ask.added_shares,w.ask.observed_reduction_shares,w.ask.net_change_shares,w.ask.addition_rate_pct,w.ask.reduction_rate_pct,w.source_span_start,w.source_span_end,w.sampling_crosses_boundary,w.sample_pairs,'未进行',w.visibility_counts?.in_five_same_price,w.visibility_counts?.entered_five,w.visibility_counts?.left_five]);
+        const rows=[['股票','3秒窗口开始UTC','3秒窗口结束UTC','数据更新UTC（仍可回补）','共同成交量股仅一份','买盘增加股','买盘减少股','买盘净变化股','买增加成交比百分比','买减少成交比百分比','卖盘增加股','卖盘减少股','卖盘净变化股','卖增加成交比百分比','卖减少成交比百分比','实际快照开始UTC','实际快照结束UTC','采样跨窗','比较次数','成交方向归因','同价仍在五档内变动项数','进入五档次数','移出五档次数','今日比率重置起点UTC（空为未重置）']];
+        for(const w of result?.windows||[])rows.push([code,w.start,w.end,w.confirmed_at,w.source_trade_volume_shares,w.bid.added_shares,w.bid.observed_reduction_shares,w.bid.net_change_shares,w.bid.addition_rate_pct,w.bid.reduction_rate_pct,w.ask.added_shares,w.ask.observed_reduction_shares,w.ask.net_change_shares,w.ask.addition_rate_pct,w.ask.reduction_rate_pct,w.source_span_start,w.source_span_end,w.sampling_crosses_boundary,w.sample_pairs,'未进行',w.visibility_counts?.in_five_same_price,w.visibility_counts?.entered_five,w.visibility_counts?.left_five,result?.rate_reset_at||'']);
         download(`${code}_三秒方向中立挂量统计_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else if (mode === 'stats') {
-        const rows=[['股票','会话启动UTC','数据截至UTC（按窗口顺序累计）','已核对盘口时间UTC','盘口侧','观察增加股','观察减少股','可见净变化股','共同累计成交分母股','增加成交比百分比','减少成交比百分比','实时归档窗口数','排除区间','撤单率','成交方向归因']];
-        for(const point of result?.timeline||[])for(const side of ['bid','ask']){const m=point[side];rows.push([code,sessions.get(code)?.started_at,point.at,point.through,side,m.added_shares,m.observed_reduction_shares,m.net_change_shares,m.denominator_trade_shares,m.addition_rate_pct,m.reduction_rate_pct,point.confirmed_intervals,point.excluded_intervals,m.reduction_rate_pct,'五档唯一价格侧推算']);}
+        const rows=[['股票','会话启动UTC','数据截至UTC（按窗口顺序累计）','已核对盘口时间UTC','盘口侧','观察增加股','观察减少股','可见净变化股','共同累计成交分母股','增加成交比百分比','减少成交比百分比','实时归档窗口数','排除区间','撤单率','成交方向归因','今日比率重置起点UTC（空为未重置）']];
+        for(const point of result?.timeline||[])for(const side of ['bid','ask']){const m=point[side];rows.push([code,sessions.get(code)?.started_at,point.at,point.through,side,m.added_shares,m.observed_reduction_shares,m.net_change_shares,m.denominator_trade_shares,m.addition_rate_pct,m.reduction_rate_pct,point.confirmed_intervals,point.excluded_intervals,m.reduction_rate_pct,'五档唯一价格侧推算',result?.rate_reset_at||'']);}
         download(`${code}_方向中立累计统计_${time}.csv`,csvText(rows),'text/csv;charset=utf-8');
       } else {
-        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:9,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'按区间前后五档的唯一价格侧推断成交归侧；五档外成交纳入同期分母；同时对应两侧或任一路覆盖不足的区间不计累计。非交易所逐笔委托统计。同指纹记录不能区分无唯一ID的源修订。',calculation:{version:9,window_ms:3000,confirmed_at_semantics:'兼容字段，表示本次已收数据截至时间，不表示封窗；timeline为当前版本按窗口顺序累计，非不可变发布历史',trade_attribution:'inferred_from_unique_endpoint_book_price',queue_flow:'current_shares - (previous_shares - same_interval_same_price_side_trade_shares)',reduction_ratio:'cancellation_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'visible_added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:0,update_mode:'every_received_response_with_late_backfill',time_basis:'盘口后帧收到时间与成交源时间归档；历史选点仅按当时已收到的数据重算；窗口永不因首次展示而封账'},session:sessions.get(code),statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
+        download(`${code}_盘口成交原始记录_${time}.json`,JSON.stringify({schema_version:9,code,exported_at:stamp(),units:'数量股、价格元；ISO时间含时区',limitations:'按区间前后五档的唯一价格侧推断成交归侧；五档外成交纳入同期分母；同时对应两侧或任一路覆盖不足的区间不计累计。非交易所逐笔委托统计。同指纹记录不能区分无唯一ID的源修订。',calculation:{version:9,window_ms:3000,confirmed_at_semantics:'兼容字段，表示本次已收数据截至时间，不表示封窗；timeline为当前版本按窗口顺序累计，非不可变发布历史',trade_attribution:'inferred_from_unique_endpoint_book_price',queue_flow:'current_shares - (previous_shares - same_interval_same_price_side_trade_shares)',reduction_ratio:'cancellation_shares / denominator_trade_shares * 100',addition_ratio:'added_shares / denominator_trade_shares * 100',net_change:'visible_added_shares - observed_reduction_shares',zero_trade_ratio:null,settlement_delay_ms:0,update_mode:'every_received_response_with_late_backfill',time_basis:'盘口后帧收到时间与成交源时间归档；历史选点仅按当时已收到的数据重算；窗口永不因首次展示而封账'},session:sessions.get(code),derived_rate_reset_at:result?.rate_reset_at||null,statistics:result,events:c.events,ticks:[...c.ticks.values()]},null,2),'application/json;charset=utf-8');
       }
     } catch (e) { $('bookRecordStatus').textContent = '导出失败：' + e.message; }
   }
