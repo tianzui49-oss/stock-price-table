@@ -44,7 +44,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}.hero{display:flex;ju
     <div id="status">输入股票代码或名称后点击“查询 / 开始”。实时图需要在 A 股交易时段保持页面打开；默认每 1 秒采样一次。</div>
   </section>
 
-  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="rateResetAll" type="button">重置今日比率累计（全部自选＋当前股）</button><button class="secondary" id="watchlistPause" type="button">暂停全部采集</button><a class="secondary" id="localClearLink" href="/clear-local.html?v=scoped-reset-v1">按股票／日期清除记录</a></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="rateResetStatus" class="small" role="status">仅重置今日加单、撤单与共同成交分母的累计起点；点击后先核对股票清单，不删除任何记录，不重启录制。</p><p id="watchlistStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
+  <section class="card" id="watchlistPanel" aria-labelledby="watchlistTitle"><div class="section-head" style="flex-wrap:wrap"><h2 id="watchlistTitle">我的自选</h2><button class="secondary" id="rateResetAll" type="button">重置今日比率累计（全部自选＋当前股）</button><button class="secondary" id="watchlistPause" type="button" aria-expanded="false" aria-controls="collectionSelection">暂停／继续采集</button><a class="secondary" id="localClearLink" href="/clear-local.html?v=scoped-reset-v1">按股票／日期清除记录</a></div><p class="small">在股票名称旁点击“加入自选”。打开本网页即为所有自选股同时采集普通 THSDK 五档与逐笔，搜索其他股票不会打断自选采集。仅在本页面运行，休市不轮询；关页、后台节流或断网会留下缺口，不能补回历史五档。</p><p id="rateResetStatus" class="small" role="status">仅重置今日加单、撤单与共同成交分母的累计起点；点击后先核对股票清单，不删除任何记录，不重启录制。</p><p id="watchlistStatus" class="small" role="status"></p><section id="collectionSelection" hidden aria-labelledby="collectionSelectionTitle" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0"><h3 id="collectionSelectionTitle" style="margin:0 0 8px">选择要暂停／继续采集的股票</h3><p class="small">范围为全部自选＋当前查询股。勾选后点击操作才生效；未选股票不受影响。只控制本页后续五档与逐笔记录，不删除数据、不重置累计；行情和图表仍可查看。暂停设置仅在当前页面有效。</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="collectionSelectAll" class="secondary" type="button">一键全选</button><button id="collectionSelectNone" class="secondary" type="button">全不选</button></div><div id="collectionSelectionItems" style="display:grid;gap:8px;margin:10px 0;max-height:300px;overflow:auto"></div><p id="collectionSelectionCount" class="small" role="status"></p><div style="display:flex;gap:8px;flex-wrap:wrap"><button id="collectionPauseSelected" class="secondary" type="button">暂停所选采集</button><button id="collectionResumeSelected" class="secondary" type="button">继续所选采集</button><button id="collectionSelectionCancel" class="secondary" type="button">取消</button></div></section><p id="collectionActionStatus" class="small" role="status"></p><div id="watchlistItems" style="display:grid;gap:8px"></div></section>
 
 <section id="result" hidden>
     <section class="card">
@@ -1012,8 +1012,8 @@ const watchlist = (() => {
   function persist(next){try{localStorage.setItem(key,JSON.stringify(next));items=next;storageError='';return true;}catch{storageError='自选保存失败（可能存储空间不足），原列表未更改。';render();return false;}}
   function render(){
     const member=items.some(x=>x.code===state.code),button=$('watchlistToggle');button.disabled=!/^\d{6}$/.test(state.code);button.textContent=member?'移出自选':'加入自选';button.setAttribute('aria-pressed',String(member));
-    const paused=bookRecorder.isPaused();$('watchlistPause').textContent=paused?'继续全部采集':'暂停全部采集';
-    $('watchlistStatus').textContent=storageError||`${items.length} 只自选｜${paused?'全部采集已暂停':document.hidden?'后台继续尝试采集（浏览器可能节流）':marketPhase().open?'交易时段，按实时采样间隔采集':marketPhase().label+'，自动轮询暂停'}｜列表和记录保存在当前浏览器，不跨设备同步。`;
+    const targets=bookRecorder.collectionCodes(),pausedCount=targets.filter(code=>bookRecorder.isCodePaused(code)).length;const paused=bookRecorder.isPaused()||(targets.length>0&&pausedCount===targets.length);
+    $('watchlistStatus').textContent=storageError||`${items.length} 只自选｜${paused?'全部采集已暂停':pausedCount?`已暂停 ${pausedCount} 只，其余按原规则采集`:document.hidden?'后台继续尝试采集（浏览器可能节流）':marketPhase().open?'交易时段，按实时采样间隔采集':marketPhase().label+'，自动轮询暂停'}｜列表和记录保存在当前浏览器，不跨设备同步。`;
     const nextKey=JSON.stringify(items.map(item=>[item.code,item.name,bookRecorder.status(item.code)]));if(nextKey===renderKey)return;renderKey=nextKey;
     $('watchlistItems').replaceChildren(...items.map(item=>{const row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)';const open=document.createElement('button');open.className='secondary';open.textContent=`${item.name}（${item.code}）`;open.title='查看该股行情、已有记录和导出';open.addEventListener('click',()=>{$('query').value=item.code;void runQuery();});const status=document.createElement('span');status.className='small';status.style.flex='1';status.textContent=bookRecorder.status(item.code);const remove=document.createElement('button');remove.className='secondary';remove.textContent='移出';remove.setAttribute('aria-label',`移出自选 ${item.code}`);remove.addEventListener('click',()=>removeCode(item.code));row.append(open,status,remove);return row;}));
     if(!items.length){const note=document.createElement('span');note.className='small';note.textContent='暂无自选。先查询股票，再点股票名称旁的“加入自选”。';$('watchlistItems').append(note);}
@@ -1021,7 +1021,15 @@ const watchlist = (() => {
   function removeCode(code){if(persist(items.filter(x=>x.code!==code))){bookRecorder.syncWatchlist();render();}}
   function toggle(){if(!/^\d{6}$/.test(state.code))return;if(items.some(x=>x.code===state.code))return removeCode(state.code);if(persist([...items,{code:state.code,name:state.name||state.code}])){bookRecorder.syncWatchlist();render();}}
   function updateName(code,name){if(name&&name!==code&&items.some(x=>x.code===code&&x.name!==name))persist(items.map(x=>x.code===code?{code,name}:x));}
-  function init(){$('watchlistToggle').addEventListener('click',toggle);$('watchlistPause').addEventListener('click',()=>bookRecorder.setPaused(!bookRecorder.isPaused()));bookRecorder.syncWatchlist();render();}
+  function selectionInputs(){return [...$('collectionSelectionItems').querySelectorAll('input[type=checkbox]')];}
+  function selectionCount(){const count=selectionInputs().filter(x=>x.checked).length;$('collectionSelectionCount').textContent=`已选 ${count} / ${selectionInputs().length} 只`;$('collectionPauseSelected').disabled=!count;$('collectionResumeSelected').disabled=!count;}
+  function closeSelection(){$('collectionSelection').hidden=true;$('watchlistPause').setAttribute('aria-expanded','false');$('watchlistPause').focus();}
+  function openSelection(){
+    const targets=bookRecorder.collectionCodes();$('collectionSelectionItems').replaceChildren(...targets.map(code=>{const label=document.createElement('label');label.style.cssText='display:flex;gap:8px;align-items:center;min-height:36px';const input=document.createElement('input');input.type='checkbox';input.value=code;input.checked=true;input.addEventListener('change',selectionCount);const text=document.createElement('span'),name=items.find(x=>x.code===code)?.name||(state.code===code?state.name:code)||code;text.textContent=`${name}（${code}）${state.code===code?' · 当前股':''}｜${bookRecorder.isCodePaused(code)?'采集已暂停':'采集已启用'}`;label.append(input,text);return label;}));
+    $('collectionSelection').hidden=false;$('watchlistPause').setAttribute('aria-expanded','true');selectionCount();if(!targets.length)$('collectionSelectionCount').textContent='暂无可选股票，请先查询股票或加入自选。';$('collectionSelectAll').focus();
+  }
+  function applySelection(value){const selected=selectionInputs().filter(x=>x.checked).map(x=>x.value);if(!selected.length)return;bookRecorder.setCodesPaused(selected,value);$('collectionActionStatus').textContent=`已${value?'暂停':'继续'} ${selected.length} 只股票采集：${selected.join('、')}。未选股票与已有数据未更改。`;closeSelection();}
+  function init(){$('watchlistToggle').addEventListener('click',toggle);$('watchlistPause').addEventListener('click',openSelection);$('collectionSelectAll').addEventListener('click',()=>{selectionInputs().forEach(x=>x.checked=true);selectionCount();});$('collectionSelectNone').addEventListener('click',()=>{selectionInputs().forEach(x=>x.checked=false);selectionCount();});$('collectionPauseSelected').addEventListener('click',()=>applySelection(true));$('collectionResumeSelected').addEventListener('click',()=>applySelection(false));$('collectionSelectionCancel').addEventListener('click',closeSelection);$('collectionSelection').addEventListener('keydown',e=>{if(e.key==='Escape')closeSelection();});bookRecorder.syncWatchlist();render();}
   return {codes,render,init,updateName};
 })();
 
@@ -1029,7 +1037,7 @@ const watchlist = (() => {
 const bookRecorder = (() => {
   let dbPromise, queue = Promise.resolve(), enabled = true, lastError = '';
   let activeCode = '', stopped = false, scheduler = null, inFlight = 0, roundRobin = 0;
-  const collectors = new Map(), health = new Map();
+  const collectors = new Map(), health = new Map(), pausedCodes = new Set();
   let viewTime = null;
   const last = new Map(), knownTicks = new Map(), sessions = new Map(), segments = new Map(), caches = new Map();
   const box = document.createElement('section'); box.className='card'; box.id='bookRecorder';
@@ -1285,22 +1293,23 @@ const bookRecorder = (() => {
     c.events.push(event); c.dirty = true;
   }
   function capture(kind, payload, query = null) {
-    if (!enabled || stopped || !collectors.get(payload.code)?.ready) return;
+    if (isCodePaused(payload.code) || !collectors.get(payload.code)?.ready) return;
     const session = sessions.get(payload.code); if (!session) return;
     const copy = JSON.parse(JSON.stringify(payload)), at = stamp(), context = { session_id: session.id, segment_id: segments.get(payload.code) };
-    queue = queue.then(() => save(kind, copy, query, at, context)).then(() => { const h=health.get(copy.code)||{};health.set(copy.code,{...h,[kind]:at,[kind+'Error']:'',saveError:''});lastError = ''; watchlist.render();if(state.code===copy.code)return refresh(); }).catch(e => { const h=health.get(copy.code)||{};health.set(copy.code,{...h,saveError:e.message});lastError = e.message;watchlist.render();if(state.code===copy.code)return refresh(); });
+    const job=collectors.get(copy.code);let saved=false;
+    queue = queue.then(async () => {if(isCodePaused(copy.code)||collectors.get(copy.code)!==job)return;await save(kind, copy, query, at, context);saved=true;}).then(() => { if(!saved)return;const h=health.get(copy.code)||{};health.set(copy.code,{...h,[kind]:at,[kind+'Error']:'',saveError:''});lastError = ''; watchlist.render();if(state.code===copy.code)return refresh(); }).catch(e => { const h=health.get(copy.code)||{};health.set(copy.code,{...h,saveError:e.message});lastError = e.message;watchlist.render();if(state.code===copy.code)return refresh(); });
   }
   function drop(code){const job=collectors.get(code);if(job){job.controller?.abort();collectors.delete(code);}}
   function pause() { activeCode='';syncWatchlist();renderStats(); }
   function desiredCodes(){return [...new Set([...watchlist.codes(),...(activeCode?[activeCode]:[])])];}
   function syncWatchlist(){
-    const desired=new Set(enabled&&!stopped?desiredCodes():[]);
+    const desired=new Set(desiredCodes().filter(code=>!isCodePaused(code)));
     for(const code of collectors.keys())if(!desired.has(code))drop(code);
     for(const code of desired)if(!collectors.has(code))void start(code);
     if(!scheduler)scheduler=setInterval(heartbeat,1000);
   }
   async function start(code,startedAt=stamp(),reset=false){
-    if(!enabled||stopped||!desiredCodes().includes(code))return;
+    if(isCodePaused(code)||!desiredCodes().includes(code))return;
     if(collectors.has(code)&&!reset)return;
     drop(code);const job={ready:false,busy:false,controller:null,next:0,initial:true};collectors.set(code,job);
     const task=async()=>{
@@ -1335,7 +1344,7 @@ const bookRecorder = (() => {
   }
   async function poll(code,explicit=false){
     const job=collectors.get(code);
-    if(!job?.ready||!enabled||stopped||job.busy||inFlight>=4||(!explicit&&!marketPhase().open))return;
+    if(!job?.ready||isCodePaused(code)||job.busy||inFlight>=4||(!explicit&&!marketPhase().open))return;
     if(sessions.get(code)?.day!==dayShanghai()){await start(code,stamp(),true);return;}
     const controller=new AbortController();job.controller=controller;job.busy=true;job.initial=false;inFlight++;
     job.next=Date.now()+Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;
@@ -1345,7 +1354,7 @@ const bookRecorder = (() => {
         const response=await fetch(THSDK_TICK_API.replace('/api/ticks','/api/'+kind)+'?code='+code,{cache:'no-store',credentials:'omit',signal:controller.signal});
         const data=await response.json();
         if(!response.ok||data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('盘口 / 成交读取失败');
-        if(collectors.get(code)!==job||!enabled||stopped)return;
+        if(collectors.get(code)!==job||isCodePaused(code))return;
         health.set(code,{...(health.get(code)||{}),[kind+'Error']:''});
         capture(kind,data,kind==='ticks'?{code}:null);
       }catch(e){if(collectors.get(code)===job)health.set(code,{...(health.get(code)||{}),[kind+'Error']:e.name==='AbortError'?'采样超时，可能有缺口':e.message});}
@@ -1367,7 +1376,14 @@ const bookRecorder = (() => {
     renderStats();watchlist.render();
   }
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){for(const job of collectors.values())job.next=0;heartbeat();if(tickState.enabled&&marketPhase().open)tickSync(true);}});
-  function setPaused(value){stopped=Boolean(value);if(!stopped){enabled=true;$('bookRecordEnabled').checked=true;}syncWatchlist();void refresh();watchlist.render();}
+  function isCodePaused(code){return stopped||!enabled||pausedCodes.has(code);}
+  function setCodesPaused(codes,value){
+    const targets=desiredCodes(),selected=[...new Set(codes)].filter(code=>targets.includes(code));if(!selected.length)return;
+    if(!value&&(stopped||!enabled)){targets.forEach(code=>pausedCodes.add(code));stopped=false;enabled=true;$('bookRecordEnabled').checked=true;}
+    for(const code of selected){if(value)pausedCodes.add(code);else pausedCodes.delete(code);}
+    syncWatchlist();void refresh();watchlist.render();
+  }
+  function setPaused(value){stopped=Boolean(value);if(!stopped){pausedCodes.clear();enabled=true;$('bookRecordEnabled').checked=true;}syncWatchlist();void refresh();watchlist.render();}
   function status(code){const h=health.get(code)||{},errors=[h.saveError,h.depthError,h.ticksError].filter(Boolean),clock=at=>at?tickSourceTime(at):'尚无';return `${collectors.has(code)?'采集已启用':'采集已暂停'}｜五档已保存 ${clock(h.depth)}；逐笔已保存 ${clock(h.ticks)}${errors.length?'｜'+errors.join('；'):h.loading?'｜读取中…':''}`;}
   function viewAt(time = null) { viewTime = time; renderStats(); }
   function csvText(rows) { return '\uFEFF' + rows.map(row => row.map(v => '"' + String(v ?? '').replaceAll('"', '""') + '"').join(',')).join('\r\n'); }
@@ -1401,7 +1417,7 @@ const bookRecorder = (() => {
   $('bookRecordJSON').addEventListener('click', () => void exportData());
   $('bookRecordCSV').addEventListener('click', () => void exportData('changes'));
   $('bookStatsCSV').addEventListener('click', () => void exportData('stats'));
-  return { capture, refresh, compare, begin, pause, heartbeat, viewAt, exportData, syncWatchlist, setPaused, isPaused:()=>stopped||!enabled, status };
+  return { capture, refresh, compare, begin, pause, heartbeat, viewAt, exportData, syncWatchlist, setPaused, setCodesPaused, isCodePaused, collectionCodes:desiredCodes, isPaused:()=>stopped||!enabled, status };
 })();
 
 watchlist.init();
@@ -1409,7 +1425,7 @@ depthRender();$('depthReadOnce').disabled=true;$('depthReadOnce').addEventListen
 $('tickLatestBtn').addEventListener('click',()=>{if(state.chartDate!==dayShanghai()){ $('chartDate').value=dayShanghai();void loadSelectedChartDay().then(()=>{clearChartSelection();tickSync(true,true);});}else{clearChartSelection();tickSync(true,true);}});
 
 renderStockHistory();$('historySelect').addEventListener('change',event=>{if(event.target.value){$('query').value=event.target.value;setStatus('已填入历史股票代码；点击“查询 / 开始”即可查询。');}});$('clearHistoryBtn').addEventListener('click',()=>{try{localStorage.removeItem(STOCK_HISTORY_KEY);}catch{}renderStockHistory();setStatus('已清除本浏览器保存的股票输入历史。');});
-$('queryForm').addEventListener('submit',runQuery);$('chartDate').addEventListener('change',loadSelectedChartDay);$('stopBtn').addEventListener('click',()=>{stopTimer();tickStop();bookRecorder.setPaused(true);setStatus('已停止自动刷新与全部自选采集；点击“继续全部采集”或“查询 / 开始”恢复。');});$('csvBtn').addEventListener('click',downloadCSV);$('mdBtn').addEventListener('click',()=>download(`${state.code}_量价报告.md`,makeReport(),'text/markdown;charset=utf-8'));
+$('queryForm').addEventListener('submit',runQuery);$('chartDate').addEventListener('change',loadSelectedChartDay);$('stopBtn').addEventListener('click',()=>{stopTimer();tickStop();bookRecorder.setPaused(true);setStatus('已停止自动刷新与全部自选采集；可在“暂停／继续采集”中选择恢复，或点击“查询 / 开始”恢复全局停止（单股暂停设置保留）。');});$('csvBtn').addEventListener('click',downloadCSV);$('mdBtn').addEventListener('click',()=>download(`${state.code}_量价报告.md`,makeReport(),'text/markdown;charset=utf-8'));
 $('noNews').addEventListener('change',()=>{if(state.code&&$('noNews').checked){state.news=[];state.anns=[];renderNews();}});
 let chartGesture=null,suppressChartHover=false,chartHoverResume=null;
 const CHART_DRAG_THRESHOLD=8; // CSS pixels: tolerate tiny finger jitter, not a real swipe.
