@@ -596,6 +596,37 @@ function marketPhase(at=new Date()){
 }
 
 const THSDK_TICK_API='https://8766-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/ticks';
+// 请求失败按资源退避；五档故障不阻断逐笔，不把旧响应冒充新采样。
+const thsdkReadHealth=new Map();
+let thsdkSourceCooldownUntil=0;
+function thsdkReadUntil(url){return Math.max(thsdkSourceCooldownUntil,thsdkReadHealth.get(String(url))?.until||0);}
+function thsdkRetryAfter(response){
+  const text=response.headers?.get?.('Retry-After');if(!text)return 0;
+  const seconds=Number(text),ms=Number.isFinite(seconds)?seconds*1000:Date.parse(text)-Date.now();
+  return Number.isFinite(ms)?Math.max(0,Math.min(300000,ms)):0;
+}
+async function thsdkRead(url,signal){
+  const key=String(url),now=Date.now(),previous=thsdkReadHealth.get(key);
+  if(signal?.aborted)throw signal.reason||new DOMException('Aborted','AbortError');
+  if(thsdkReadUntil(key)>now){const error=Error((previous?.reason||'数据源暂缓读取')+`；等待 ${Math.ceil((thsdkReadUntil(key)-now)/1000)} 秒后重试`);error.cooldown=true;throw error;}
+  let response,data;
+  try{
+    response=await fetch(key,{cache:'no-store',signal,credentials:'omit'});
+    try{data=await response.json();}catch{if(response.ok)throw Error('行情接口未返回有效 JSON');data={};}
+    if(!response.ok||data.error){
+      const reasons={rate_limited:'中转接口限流',source_rate_limited:'数据源限流',source_encode_failed:'数据源编码失败',source_window_mismatch:'数据源返回股票或时间窗口不匹配',relay_busy:'中转服务繁忙',data_source_unavailable:'数据源暂不可用'};
+      const error=Error(reasons[data.error]||`行情接口 HTTP ${response.status}`);error.status=response.status;error.sourceCode=data.error;error.retryAfter=thsdkRetryAfter(response);throw error;
+    }
+    thsdkReadHealth.delete(key);return data;
+  }catch(error){
+    if(signal?.aborted||error.name==='AbortError')throw error;
+    const failures=(previous?.failures||0)+1,reason=error instanceof TypeError?'行情网络连接失败':error.message;
+    const delay=Math.max(error.retryAfter||0,error.status===429?10000:error.sourceCode==='source_encode_failed'?15000:Math.min(30000,2000*2**Math.min(failures-1,4)));
+    const until=Date.now()+delay;thsdkReadHealth.set(key,{until,failures,reason});
+    if(error.sourceCode==='source_rate_limited')thsdkSourceCooldownUntil=Math.max(thsdkSourceCooldownUntil,until);
+    error.message=reason+`；${Math.ceil(delay/1000)} 秒后自动重试`;throw error;
+  }
+}
 function quoteBeijing(value){const v=String(value||'');return /^\d{14}$/.test(v)?`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)} ${v.slice(8,10)}:${v.slice(10,12)}:${v.slice(12,14)}（北京时间）`:'时间暂不可用';}
 function tickSourceTime(value){const date=new Date(value);if(!Number.isFinite(date.getTime()))return '时间暂不可用';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(date);}
 function tickClock(value){return typeof value==='number'&&value>=1500000000&&value<=2200000000?tickSourceTime(value*1000):'';}
@@ -725,24 +756,11 @@ function tickSync(force=false,explicit=false){
   $('thsdkStockLabel').textContent=`${state.name||state.code}（${state.code}）`;$('thsdkMode').textContent=q.label;
   if(cached&&(!canRequest||(!force&&Date.now()-cached.at<60000))){tickRender(cached.data);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(cached.data,true,!q.params.has('time'));return;}
   if(!canRequest){if(changed||$('thsdkTableWrap').hidden)$('thsdkStatus').textContent='休市，保留最后有效成交，暂停自动刷新。';return;}
-  if(!changed&&!force&&!explicit)return;if(tickState.controller)return;
+  if(!changed&&!force&&!explicit)return;if(tickState.controller||thsdkReadUntil(`${THSDK_TICK_API}?${q.params}`)>Date.now())return;
   clearTimeout(tickState.debounce);$('thsdkStatus').classList.remove('thsdk-error');if($('thsdkTableWrap').hidden)$('thsdkStatus').textContent='正在加载成交…';
   const generation=tickState.generation;tickState.debounce=setTimeout(()=>tickFetch(q,generation,explicit||changed),changed?120:0);
 }
-async function tickReadResponse(q,signal){
-  // 仅重试一次可恢复的读取故障；切股/停止的 abort 不重试，原始响应不改写。
-  for(let attempt=0;attempt<2;attempt++){
-    try{
-      const response=await fetch(`${THSDK_TICK_API}?${q.params}`,{cache:'no-store',signal,credentials:'omit'});
-      if(!response.ok){const error=Error(response.status===429?'逐笔接口限流':`逐笔接口 HTTP ${response.status}`);error.retryable=response.status===429||response.status>=500;throw error;}
-      let data;try{data=await response.json();}catch{throw Error('逐笔接口返回的不是有效 JSON');}
-      if(data.error)throw Error('逐笔数据源暂不可用');return data;
-    }catch(error){
-      if(attempt||signal.aborted||!(error.retryable||error instanceof TypeError))throw error;
-      await new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);reject(signal.reason||new DOMException('Aborted','AbortError'));},timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},1500);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
-    }
-  }
-}
+async function tickReadResponse(q,signal){return thsdkRead(`${THSDK_TICK_API}?${q.params}`,signal);}
 async function tickFetch(q,generation,explicit=false){
   if(generation!==tickState.generation||!tickState.enabled||(!q.params.has('time')&&!marketPhase().open&&!explicit))return;
   const controller=new AbortController();tickState.controller=controller;const timeout=setTimeout(()=>controller.abort(),18000);
@@ -784,15 +802,15 @@ function depthSync(force=false,manual=false){
   if(!/^\d{6}$/.test(state.code))return;
   if(depthSelected()){if(depthState.controller)depthStop();depthShow();return;}
   if(!manual&&!marketPhase().open&&depthState.lastCode===state.code){depthShow();return;}
-  if(depthState.controller)return;if(!force&&!manual&&depthState.lastCode===state.code){depthShow();return;}
+  if(depthState.controller||thsdkReadUntil(THSDK_TICK_API.replace('/api/ticks','/api/depth')+'?code='+state.code)>Date.now())return;if(!force&&!manual&&depthState.lastCode===state.code){depthShow();return;}
   let note='';const code=state.code,generation=depthState.generation,controller=new AbortController();depthState.controller=controller;depthState.manual=manual;depthState.lastCode=code;const timeout=setTimeout(()=>controller.abort(),18000);depthShow('正在读取…');
-  fetch(THSDK_TICK_API.replace('/api/ticks','/api/depth')+'?code='+code,{cache:'no-store',credentials:'omit',signal:controller.signal}).then(async response=>{
-    const data=await response.json();if(!response.ok||data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('unavailable');if(generation!==depthState.generation||code!==state.code)return;
+  thsdkRead(THSDK_TICK_API.replace('/api/ticks','/api/depth')+'?code='+code,controller.signal).then(data=>{
+    if(data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('五档响应字段不匹配');if(generation!==depthState.generation||code!==state.code)return;
     if(!data.rows.some(r=>r.price!==null&&Number.isFinite(Number(r.price))&&Number(r.price)>0)){note='本次无有效报价，保留最后有效数据。';return;}
     bookRecorder.capture('depth',data);
     const previous=depthRecord(code),same=previous&&JSON.stringify(previous.rows)===JSON.stringify(data.rows),record=same?{...previous,checked_at:data.fetched_at}:{source:data.source,code,rows:data.rows,fetched_at:data.fetched_at,checked_at:data.fetched_at};
     depthState.records.set(code,record);try{localStorage.setItem(DEPTH_STORAGE_PREFIX+code,JSON.stringify(record));}catch{}depthShow();
-  }).catch(()=>{if(generation===depthState.generation&&code===state.code)note='读取失败，保留最后有效数据；后续刷新将重试。';}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}if(generation===depthState.generation&&code===state.code)depthShow(note);});
+  }).catch(error=>{if(generation===depthState.generation&&code===state.code)note=`读取失败：${error.message}。保留最后有效数据；后续刷新将重试。`;}).finally(()=>{clearTimeout(timeout);if(depthState.controller===controller){depthState.controller=null;depthState.manual=false;}if(generation===depthState.generation&&code===state.code)depthShow(note);});
 }
 /* Live, revisable three-second buckets, not a settlement timer; trade direction stays neutral. */
 const BookThreeSecondCalculator = (() => {
@@ -1374,9 +1392,8 @@ const bookRecorder = (() => {
     const timeout=setTimeout(()=>controller.abort(),18000),h=health.get(code)||{};health.set(code,{...h,loading:true});
     await Promise.all(['depth','ticks'].map(async kind=>{
       try{
-        const response=await fetch(THSDK_TICK_API.replace('/api/ticks','/api/'+kind)+'?code='+code,{cache:'no-store',credentials:'omit',signal:controller.signal});
-        const data=await response.json();
-        if(!response.ok||data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('盘口 / 成交读取失败');
+        const data=await thsdkRead(THSDK_TICK_API.replace('/api/ticks','/api/'+kind)+'?code='+code,controller.signal);
+        if(data.source!=='THSDK'||data.code!==code||!Array.isArray(data.rows))throw Error('盘口 / 成交响应字段不匹配');
         if(collectors.get(code)!==job||isCodePaused(code))return;
         health.set(code,{...(health.get(code)||{}),[kind+'Error']:''});
         capture(kind,data,kind==='ticks'?{code}:null);
