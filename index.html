@@ -598,8 +598,10 @@ function marketPhase(at=new Date()){
 const THSDK_TICK_API='https://8766-ij8jq9rmvhtw6m9dy95xp-9c8c966c.us2.manus.computer/api/ticks';
 // 请求失败按资源退避；五档故障不阻断逐笔，不把旧响应冒充新采样。
 const thsdkReadHealth=new Map();
-let thsdkSourceCooldownUntil=0;
-function thsdkReadUntil(url){return Math.max(thsdkSourceCooldownUntil,thsdkReadHealth.get(String(url))?.until||0);}
+function thsdkReadUntil(url){return thsdkReadHealth.get(String(url))?.until||0;}
+const thsdkDiagnostics={build:'feed-recovery-20261023',entries:[]};
+window.thsdkDiagnostics=thsdkDiagnostics;
+function thsdkTrace(entry){thsdkDiagnostics.entries.push({at:new Date().toISOString(),...entry});if(thsdkDiagnostics.entries.length>60)thsdkDiagnostics.entries.shift();}
 function thsdkRetryAfter(response){
   const text=response.headers?.get?.('Retry-After');if(!text)return 0;
   const seconds=Number(text),ms=Number.isFinite(seconds)?seconds*1000:Date.parse(text)-Date.now();
@@ -610,6 +612,7 @@ async function thsdkRead(url,signal){
   if(signal?.aborted)throw signal.reason||new DOMException('Aborted','AbortError');
   if(thsdkReadUntil(key)>now){const error=Error((previous?.reason||'数据源暂缓读取')+`；等待 ${Math.ceil((thsdkReadUntil(key)-now)/1000)} 秒后重试`);error.cooldown=true;throw error;}
   let response,data;
+  const started=Date.now(),resource=new URL(key).pathname+new URL(key).search;
   try{
     response=await fetch(key,{cache:'no-store',signal,credentials:'omit'});
     try{data=await response.json();}catch{if(response.ok)throw Error('行情接口未返回有效 JSON');data={};}
@@ -617,13 +620,14 @@ async function thsdkRead(url,signal){
       const reasons={rate_limited:'中转接口限流',source_rate_limited:'数据源限流',source_encode_failed:'数据源编码失败',source_window_mismatch:'数据源返回股票或时间窗口不匹配',relay_busy:'中转服务繁忙',data_source_unavailable:'数据源暂不可用'};
       const error=Error(reasons[data.error]||`行情接口 HTTP ${response.status}`);error.status=response.status;error.sourceCode=data.error;error.retryAfter=thsdkRetryAfter(response);throw error;
     }
+    thsdkTrace({resource,stage:'read',ok:true,status:response.status,elapsedMs:Date.now()-started,sourceFetchedAt:data.fetched_at||null,rowCount:Array.isArray(data.rows)?data.rows.length:null});
     thsdkReadHealth.delete(key);return data;
   }catch(error){
+    thsdkTrace({resource,stage:'read',ok:false,status:response?.status||0,sourceCode:error.sourceCode||null,reason:error.message,elapsedMs:Date.now()-started,aborted:!!signal?.aborted});
     if(signal?.aborted||error.name==='AbortError')throw error;
     const failures=(previous?.failures||0)+1,reason=error instanceof TypeError?'行情网络连接失败':error.message;
     const delay=Math.max(error.retryAfter||0,error.status===429?10000:error.sourceCode==='source_encode_failed'?15000:Math.min(30000,2000*2**Math.min(failures-1,4)));
     const until=Date.now()+delay;thsdkReadHealth.set(key,{until,failures,reason});
-    if(error.sourceCode==='source_rate_limited')thsdkSourceCooldownUntil=Math.max(thsdkSourceCooldownUntil,until);
     error.message=reason+`；${Math.ceil(delay/1000)} 秒后自动重试`;throw error;
   }
 }
@@ -632,7 +636,7 @@ function tickSourceTime(value){const date=new Date(value);if(!Number.isFinite(da
 function tickClock(value){return typeof value==='number'&&value>=1500000000&&value<=2200000000?tickSourceTime(value*1000):'';}
 function tickText(value){return value==null?'—':String(value);}
 function tickLots(value){if(value==null||String(value).trim()==='')return '—';const shares=Number(value);return Number.isFinite(shares)?String(shares/100):'—';}
-const tickState={enabled:false,timer:null,debounce:null,controller:null,key:'',generation:0,cache:new Map(),latestCache:new Map(),loadingDay:'',signature:'',viewRows:[]};
+const tickState={enabled:false,timer:null,debounce:null,controller:null,key:'',generation:0,cache:new Map(),latestCache:new Map(),loadingDay:'',signature:'',viewRows:[],failureKey:'',lastSuccessAt:0};
 const tickReturnedCounts=new Map();
 function tickCountTotalText(rawRows=[]){
   const rows=[...rawRows].sort((a,b)=>(Number(b.time)||0)-(Number(a.time)||0));
@@ -666,7 +670,7 @@ function tickRenderRowStats(rows=[],counts){
 function tickClear(){ $('thsdkTickHead').replaceChildren();$('thsdkTickBody').replaceChildren();$('thsdkTableWrap').hidden=true;tickLoadedSummary();tickRenderRowStats(); }
 function tickStop(){bookRecorder.pause();depthStop();tickState.enabled=false;clearInterval(tickState.timer);clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;$('thsdkStatus').textContent='已停止自动刷新，保留当前数据。';}
 function tickReset(){tickStop();tickState.key='';tickState.cache.clear();tickState.loadingDay='';tickState.viewRows=[];tickClear();depthReset();$('thsdkStockLabel').textContent='正在查询…';$('thsdkStatus').textContent='等待加载成交明细。';}
-function tickStart(){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(false,true);}
+function tickStart(force=true){tickState.enabled=true;clearInterval(tickState.timer);const ms=Math.max(1,Math.min(600,Number($('interval').value)||1))*1000;tickState.timer=setInterval(()=>{if(!marketPhase().open)return;if(!state.timer)void refreshQuote();if(!hoveredPointTime&&(!state.chartDate||state.chartDate===dayShanghai()))tickSync(true);},ms);tickSync(Boolean(force),true);}
 function tickQuery(){
   if(!/^\d{6}$/.test(state.code)||tickState.loadingDay)return null;
   const pastDay=state.chartDate&&state.chartDate!==dayShanghai(),selected=hoveredPointTime||(pastDay?(state.chart.at(-1)?.time||`${state.chartDate} 15:00:00`):null);
@@ -746,7 +750,7 @@ function tickRender(data){
   if(anchor){let occurrence=0,index=rows.findIndex(row=>tickRowFingerprint(row)===anchor.key&&++occurrence===anchor.occurrence);wrap.scrollTop=index>=0?body.children[index].offsetTop+anchor.offset:oldTop;}else wrap.scrollTop=0;
   return true;
 }
-function tickSummary(data,cached=false,latest=false){const last=(data.rows||[]).reduce((max,r)=>Number.isFinite(Number(r.time))?Math.max(max,Number(r.time)):max,-Infinity);return data.rows?.length?tickCountTotalText(data.rows) + `｜最近成交：${tickClock(last)||'时间暂不可用'}（北京时间）${cached?'｜已读取数据':''}${data.history?.note?`｜${String(data.history.note).slice(0,80)}`:''}${marketPhase().open?'':'｜休市，暂停自动刷新'}`:'该时段暂无可用成交，不以其他日期数据代替。';}
+function tickSummary(data,cached=false,latest=false,readAt=0){const last=(data.rows||[]).reduce((max,r)=>Number.isFinite(Number(r.time))?Math.max(max,Number(r.time)):max,-Infinity);return data.rows?.length?tickCountTotalText(data.rows) + `｜最近成交：${tickClock(last)||'时间暂不可用'}（北京时间）${cached?`｜上次成功读取：${readAt?tickSourceTime(readAt):'时间暂不可用'}`:''}${data.history?.note?`｜${String(data.history.note).slice(0,80)}`:''}${marketPhase().open?'':'｜休市，暂停自动刷新'}`:'该时段暂无可用成交，不以其他日期数据代替。';}
 function tickSync(force=false,explicit=false){
   if(!tickState.enabled)return;depthSync(force,explicit);const q=tickQuery();if(!q)return;
   const changed=q.key!==tickState.key,canRequest=q.params.has('time')||marketPhase().open||explicit||changed;
@@ -754,9 +758,10 @@ function tickSync(force=false,explicit=false){
   if(!cached&&!q.params.has('time')){const lastKey=[...tickState.latestCache.keys()].filter(k=>k.startsWith(state.code+'|')&&tickState.latestCache.get(k)?.length).sort().at(-1);if(lastKey)cached={at:0,data:{rows:tickState.latestCache.get(lastKey)}};}
   if(changed){clearTimeout(tickState.debounce);tickState.controller?.abort();tickState.controller=null;tickState.generation++;tickState.key=q.key;if(cached?.data.rows?.length)tickRender(cached.data);else tickClear();}
   $('thsdkStockLabel').textContent=`${state.name||state.code}（${state.code}）`;$('thsdkMode').textContent=q.label;
-  if(cached&&(!canRequest||(!force&&Date.now()-cached.at<60000))){tickRender(cached.data);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(cached.data,true,!q.params.has('time'));return;}
+  const liveFailure=tickState.failureKey===q.key&&!q.params.has('time');
+  if(cached&&(!canRequest||(!force&&Date.now()-cached.at<60000))&&!liveFailure){tickRender(cached.data);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(cached.data,true,!q.params.has('time'),cached.successAt);return;}
   if(!canRequest){if(changed||$('thsdkTableWrap').hidden)$('thsdkStatus').textContent='休市，保留最后有效成交，暂停自动刷新。';return;}
-  if(!changed&&!force&&!explicit)return;if(tickState.controller||thsdkReadUntil(`${THSDK_TICK_API}?${q.params}`)>Date.now())return;
+  if(!changed&&!force&&!explicit&&!liveFailure)return;if(tickState.controller||thsdkReadUntil(`${THSDK_TICK_API}?${q.params}`)>Date.now())return;
   clearTimeout(tickState.debounce);$('thsdkStatus').classList.remove('thsdk-error');if($('thsdkTableWrap').hidden)$('thsdkStatus').textContent='正在加载成交…';
   const generation=tickState.generation;tickState.debounce=setTimeout(()=>tickFetch(q,generation,explicit||changed),changed?120:0);
 }
@@ -772,14 +777,14 @@ async function tickFetch(q,generation,explicit=false){
     stage='display';bookRecorder.capture('ticks',data,Object.fromEntries(q.params));
     if(!data.rows.length){$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=!$('thsdkTableWrap').hidden?'暂无新成交，保留最后有效数据。':'暂无可用成交；有数据后将自动显示。';return;}
     if(q.params.has('time')){
-      tickRender(data);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(data,false,false);tickState.cache.set(q.key,{at:Date.now(),data});
+      const successAt=Date.now();tickRender(data);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(data,false,false,successAt);tickState.cache.set(q.key,{at:successAt,successAt,data});tickState.failureKey='';tickState.lastSuccessAt=successAt;
     }else{
       const sourceDays=[...new Set(data.rows.map(tickRowBeijingDay).filter(Boolean))],day=sourceDays.sort().at(-1)||String(data.history?.day||'')||dayShanghai(),cacheKey=`${state.code}|${day}`;
       const merged=tickMergeRows(tickLatestRows(state.code,day),data.rows.filter(r=>!tickRowBeijingDay(r)||tickRowBeijingDay(r)===day));
-      tickState.latestCache.set(cacheKey,merged);const view={...data,rows:merged};tickRender(view);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(view,false,true);tickState.cache.set(q.key,{at:Date.now(),data:view});
+      const successAt=Date.now();tickState.latestCache.set(cacheKey,merged);const view={...data,rows:merged};tickRender(view);$('thsdkStatus').classList.remove('thsdk-error');$('thsdkStatus').textContent=tickSummary(view,false,true,successAt);tickState.cache.set(q.key,{at:successAt,successAt,data:view});tickState.failureKey='';tickState.lastSuccessAt=successAt;
     }
     if(tickState.cache.size>128)tickState.cache.delete(tickState.cache.keys().next().value);
-  }catch(error){if(generation!==tickState.generation||q.key!==tickState.key||!tickState.enabled)return;const reason=stage==='display'?'成交已读取，但页面处理失败':error.name==='AbortError'?'逐笔读取超时':error instanceof TypeError?'逐笔网络连接失败':error.message;console.warn('逐笔'+stage+'失败',error);$('thsdkStatus').classList.add('thsdk-error');$('thsdkStatus').textContent=(q.params.has('date')?`${q.params.get('date')} 所选时段的成交暂不可用，不使用其他日期代替。`:'最新成交暂时无法读取。')+`原因：${reason}。`+(!$('thsdkTableWrap').hidden?'保留上次数据。':'暂无可显示数据。')+(marketPhase().open?'交易时段将自动重试。':'可点击“返回最新”重试。');}
+  }catch(error){if(generation!==tickState.generation||q.key!==tickState.key||!tickState.enabled)return;tickState.failureKey=q.key;const reason=stage==='display'?'成交已读取，但页面处理失败':error.name==='AbortError'?'逐笔读取超时':error instanceof TypeError?'逐笔网络连接失败':error.message;thsdkTrace({resource:'/api/ticks?'+q.params,stage,ok:false,status:error.status||0,sourceCode:error.sourceCode||null,reason,retainedRows:tickState.viewRows.length});console.warn('逐笔'+stage+'失败',error);$('thsdkStatus').classList.add('thsdk-error');$('thsdkStatus').textContent=(q.params.has('date')?`${q.params.get('date')} 所选时段的成交暂不可用，不使用其他日期代替。`:'最新成交暂时无法读取。')+`原因：${reason}。`+(!$('thsdkTableWrap').hidden?'保留上次数据。':'暂无可显示数据。')+(marketPhase().open?'交易时段将自动重试。':'可点击“返回最新”重试。');}
   finally{clearTimeout(timeout);if(tickState.controller===controller)tickState.controller=null;}
 }
 function tickDateBegin(day){if(!tickState.enabled)return;tickState.loadingDay=day;tickState.generation++;tickState.controller?.abort();tickState.controller=null;clearTimeout(tickState.debounce);tickState.key='';tickClear();depthShow();$('thsdkMode').textContent=`正在加载 ${day}`;$('thsdkStatus').textContent='正在切换日期…';}
