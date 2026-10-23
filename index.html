@@ -348,13 +348,37 @@ function chartDisplayPoints(day,points){
   const validRange=(low,high)=>Number.isFinite(Number(low))&&Number.isFinite(Number(high))&&Number(low)>0&&Number(high)>=Number(low);
   const quoteRange=quoteTime?.slice(0,10)===day&&validRange(q?.low,q?.high)&&Number(q.current)>=Number(q.low)&&Number(q.current)<=Number(q.high);
   const dailyRange=row&&validRange(row.low,row.high);
-  return points.filter(p=>{
-    if(!p.isLive)return true;
-    const time=normalizeChartTime(p.time),range=quoteRange&&time<=quoteTime?q:dailyRange?row:null;
-    if(!range)return true; // No corroborating range: do not guess or smooth.
-    const price=Math.round(Number(p.price)*100);
-    return price>=Math.round(Number(range.low)*100)&&price<=Math.round(Number(range.high)*100);
-  });
+  // Display projection only: original cache and fetch payloads stay untouched.
+  // Fresh source minutes must beat older cached copies, including HH:mm:ss aliases.
+  const minuteMap=new Map(),liveMap=new Map();
+  for(const p of [...points,...(state.intradayByDate?.[day]||[])]){
+    const time=normalizeChartTime(p.time),minute=time.slice(0,16);
+    if(time.slice(0,10)!==day||!Number.isFinite(chartTradingMinute(time)))continue;
+    if(p.isLive){
+      const range=quoteRange&&time<=quoteTime?q:dailyRange?row:null;
+      const price=Math.round(Number(p.price)*100);
+      if(range&&(price<Math.round(Number(range.low)*100)||price>Math.round(Number(range.high)*100)))continue;
+      const old=liveMap.get(minute);
+      if(!old||normalizeChartTime(old.time)<=time)liveMap.set(minute,p);
+    }else minuteMap.set(minute,p);
+  }
+  const lastMinute=[...minuteMap.keys()].sort().at(-1);
+  for(const [minute,p] of liveMap){
+    // Do not insert second-by-second oscillations into completed source minutes.
+    // Only the current quote minute may replace the most recent source minute.
+    const official=minuteMap.get(minute);
+    if(!official||(day===dayShanghai()&&minute===lastMinute&&minute===quoteTime.slice(0,16)&&normalizeChartTime(p.time)>normalizeChartTime(official.time)))minuteMap.set(minute,p);
+  }
+  return [...minuteMap.values()].sort((a,b)=>normalizeChartTime(a.time).localeCompare(normalizeChartTime(b.time)));
+}
+// Fixed A-share session axis; lunch does not consume chart width.
+function chartTradingMinute(value){
+  const t=normalizeChartTime(value),m=t.match(/^\d{4}-\d{2}-\d{2} (\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if(!m||+m[2]>59||+(m[3]||0)>59)return NaN;
+  const minute=+m[1]*60+(+m[2])+(+(m[3]||0))/60;
+  if(minute>=570&&minute<=690)return minute-570;
+  if(minute>=780&&minute<=900)return minute-660;
+  return NaN;
 }
 
 async function ensureChartReference(day){
@@ -368,7 +392,7 @@ async function loadSelectedChartDay(){
   if(!state.intradayByDate[day]){setStatus(`正在查询 ${day} 的历史分钟线…`);try{const bars=await fetchMinuteBars(state.symbol,'5',day.replaceAll('-',''),day.replaceAll('-',''));const sameDay=bars.filter(p=>p.time.slice(0,10)===day);if(sameDay.length)state.intradayByDate[day]=sameDay;}catch(e){console.warn('历史分钟线不可用',e);setChartDay(day);setStatus(`分钟线加载失败：${e.message}；请稍后重试。`,'error');return;}}
   setChartDay(day);setStatus(state.chart.length?`${day} 的历史分时已加载，共 ${state.chart.length} 个点。`:`${day} 没有可用历史分钟数据；这一天可能超出接口保留范围。`,state.chart.length?'ok':'');
 }
-function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){tickDateBegin(day);clearChartSelection();}state.chartDate=day;$('chartDate').value=day;state.chart=chartDisplayPoints(day,mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day)));drawChart();updateQuoteHeader();tickDateEnd(day);const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分钟线（并叠加实时采样）':'历史分钟线'}，共 ${count} 个点。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
+function setChartDay(day){if(!day||!state.code)return;if(day!==state.chartDate){tickDateBegin(day);clearChartSelection();}state.chartDate=day;$('chartDate').value=day;state.chart=chartDisplayPoints(day,mergePoints(loadChart(state.code,day),state.intradayByDate[day]||[]));drawChart();updateQuoteHeader();tickDateEnd(day);const count=state.chart.length;const isToday=day===dayShanghai();$('chartInfo').textContent=count?`${day}：${isToday?'当日分时（最新实时采样补充尾点）':'历史分时'}，共 ${count} 个点；横轴按真实交易时间定位，午休折叠，缺失点不补造。数据源仅提供近期分钟线；更早日期需提前归档。`:`${day}：未获取到分钟曲线。接口只返回近期交易日数据；更早日期无法从当前公开接口补回。`;}
 function addPoint(q){if(!q.time||q.time.slice(0,8)!==dayShanghai().replaceAll('-',''))return false;const day=q.time.slice(0,4)+'-'+q.time.slice(4,6)+'-'+q.time.slice(6,8),seconds=q.time.length>=14?q.time.slice(12,14):'00',hands=volumeToHand(q.volume_raw,state.symbol,q.low,q.high,q.amount_wan).hands,amountWan=Number(q.amount_wan),point={time:`${day} ${q.time.slice(8,10)}:${q.time.slice(10,12)}:${seconds}`,price:q.current,volume_hand:hands,amount_wan:Number.isFinite(amountWan)?amountWan:null,amount:Number.isFinite(amountWan)?amountWan*10000:null,isLive:true};state.quote=q;const merged=mergePoints(state.intradayByDate[day]||[],loadChart(state.code,day),[point]);storeChart(state.code,day,merged);if(state.chartDate===day){state.chart=chartDisplayPoints(day,merged);drawChart();updateQuoteHeader();setChartDay(day);}state.quote=q;upsertTodayRow(q);return true;}
 function drawChart(){
   const svg=$('chart');svg.replaceChildren();const pts=state.chart;
@@ -378,8 +402,9 @@ function drawChart(){
   const hasReference=Number.isFinite(reference)&&reference>0;
   const zeroPrices=pts.map((_,i)=>{const {amount,volume}=cumulativeAt(i);return Number.isFinite(amount)&&amount>=0&&Number.isFinite(volume)&&volume>0?amount/(volume*100):null;}).filter(Number.isFinite);
   let lo=Math.min(...prices,...zeroPrices,hasReference?reference:Infinity),hi=Math.max(...prices,...zeroPrices,hasReference?reference:-Infinity);
-  if(lo===hi){const p=Math.max(hi*.002,.01);lo-=p;hi+=p;}else{const p=(hi-lo)*.12;lo-=p;hi+=p;}
-  const x=i=>L+(pts.length===1?0:i*(W-L-R)/(pts.length-1)),y=v=>T+(hi-v)*(H-T-B)/(hi-lo);
+  if(hasReference){const span=Math.max(reference-lo,hi-reference,.01)*1.12;lo=reference-span;hi=reference+span;}
+  else if(lo===hi){const p=Math.max(hi*.002,.01);lo-=p;hi+=p;}else{const p=(hi-lo)*.12;lo-=p;hi+=p;}
+  const x=i=>L+chartTradingMinute(pts[i].time)*(W-L-R)/240,y=v=>T+(hi-v)*(H-T-B)/(hi-lo);
   function el(tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;return n;}
   for(let i=0;i<=4;i++){const v=hi-(hi-lo)*i/4,yy=y(v);svg.append(el('line',{x1:L,y1:yy,x2:W-R,y2:yy,stroke:'#e7ebf2'}));svg.append(el('text',{x:L-10,y:yy+5,'text-anchor':'end',fill:'#68758a','font-size':13},v.toFixed(2)));}
   svg.append(el('line',{x1:L,y1:T,x2:L,y2:H-B,stroke:'#9aa7b8'}));svg.append(el('line',{x1:L,y1:H-B,x2:W-R,y2:H-B,stroke:'#9aa7b8'}));
@@ -388,9 +413,10 @@ function drawChart(){
   svg.append(el('circle',{cx:x(pts.length-1),cy:y(prices.at(-1)),r:5,fill:'#2878d0'}));
   svg.append(el('line',{id:'chartZeroLine',x1:L,y1:T,x2:W-R,y2:T,stroke:'#2878d0','stroke-width':1.5,'stroke-dasharray':'7 5','pointer-events':'none',display:'none'}));
   svg.append(el('text',{id:'chartZeroLineLabel',x:L+8,y:T,fill:'#2878d0','font-size':13,'pointer-events':'none',display:'none','paint-order':'stroke',stroke:'#fff','stroke-width':3,'stroke-linejoin':'round'}));
-  const label=t=>t.includes(' ')?t.slice(11,16):t.length>=12?`${t.slice(8,10)}:${t.slice(10,12)}`:t;
-  svg.append(el('text',{x:L,y:H-65,fill:'#68758a','font-size':13},label(pts[0].time)));
-  svg.append(el('text',{x:W-R,y:H-65,'text-anchor':'end',fill:'#68758a','font-size':13},label(pts.at(-1).time)));
+  for(const [minute,label] of [[0,'09:30'],[60,'10:30'],[120,'11:30 / 13:00'],[180,'14:00'],[240,'15:00']]){
+    const xx=L+minute*(W-L-R)/240;
+    svg.append(el('text',{x:xx,y:H-65,'text-anchor':minute===0?'start':minute===240?'end':'middle',fill:'#68758a','font-size':13},label));
+  }
   svg.append(el('line',{id:'chartCrossV',x1:L,y1:T,x2:L,y2:H-B,stroke:'#d64c4c','stroke-width':1.5,'stroke-dasharray':'6 5','pointer-events':'none',display:'none'}));
   svg.append(el('line',{id:'chartCrossH',x1:L,y1:T,x2:W-R,y2:T,stroke:'#d64c4c','stroke-width':1,'stroke-dasharray':'5 5','pointer-events':'none',display:'none'}));
   svg.append(el('circle',{id:'chartCrossDot',cx:L,cy:T,r:6,fill:'#d64c4c',stroke:'#fff','stroke-width':2,'pointer-events':'none',display:'none'}));
@@ -444,7 +470,7 @@ function updateChartPointInfo(index){
   $('chartPointInfo').textContent=parts.join(' ｜ ');
   bookRecorder.viewAt(hoveredPointTime||(state.chartDate&&state.chartDate!==dayShanghai()?p.time:null));
 }
-function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L-.5||px>g.W-g.R+.5)return null;return Math.max(0,Math.min(g.pts.length-1,Math.round((px-g.L)/(g.W-g.L-g.R)*(g.pts.length-1))));}
+function chartIndexAt(event){const g=state.chartGeometry,rect=$('chart').getBoundingClientRect();if(!g||!g.pts.length||!rect.width)return null;const px=(event.clientX-rect.left)*g.W/rect.width;if(px<g.L-.5||px>g.W-g.R+.5)return null;let best=0,distance=Infinity;for(let i=0;i<g.pts.length;i++){const d=Math.abs(g.x(i)-px);if(d<=distance){best=i;distance=d;}}return best;}
 // THS vr(5): current average volume/minute divided by the prior five sessions' average.
 // Use daily totals for the denominator: five days of minute history is not required.
 function volumeRatioBaseline(day){return Object.values(state.dailyByDate||{}).filter(r=>r.date<day).sort((a,b)=>a.date.localeCompare(b.date)).slice(-5);}
